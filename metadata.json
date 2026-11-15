@@ -1,0 +1,6 @@
+{
+  "name": "DaneshBoard Studio | تخته هوشمند، آزمایشگاه تعاملی و استودیوی آموزشی",
+  "description": "نرم‌افزار دسکتاپ جامع تخته وایت‌برد هوشمند، آزمایشگاه‌های تعاملی دروس (ابتدایی تا کنکور و دانشگاه)، استودیوی ضبط ۴ کاناله و ویرایشگر ویدیو با معماری ماژولار.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

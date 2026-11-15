@@ -1,0 +1,39 @@
+{
+  "appId": "ir.daneshboard.studio",
+  "productName": "DaneshBoard Studio",
+  "directories": {
+    "output": "dist-electron"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "package.json"
+  ],
+  "extraMetadata": {
+    "main": "electron/main.cjs"
+  },
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      },
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      }
+    ],
+    "artifactName": "${productName}-${target}.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "DaneshBoard Studio",
+    "artifactName": "DaneshBoard-Studio-Setup.${ext}"
+  },
+  "portable": {
+    "artifactName": "DaneshBoard-Studio-Portable.${ext}"
+  }
+}
