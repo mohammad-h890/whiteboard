@@ -66,7 +66,7 @@ export const KeyboardShortcutsModal: React.FC<KeyboardShortcutsModalProps> = ({
                 راهنمای کلیدهای میانبر و شورتکات‌ها (Keyboard Shortcuts)
               </h3>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                تعویض سریع ابزارهای قلم، کنترل ضبط ۴ کاناله و مدیریت لایه‌های تخته بدون نیاز به موس
+                تعویض سریع ابزارهای قلم، کمند انتخاب و مدیریت لایه‌های تخته بدون نیاز به ماوس
               </p>
             </div>
           </div>
@@ -87,8 +87,7 @@ export const KeyboardShortcutsModal: React.FC<KeyboardShortcutsModalProps> = ({
               [
                 { id: 'all', label: 'همه میانبرها' },
                 { id: 'tools', label: 'ابزارهای قلم و ترسیم' },
-                { id: 'recording', label: 'ضبط و تدوین' },
-                { id: 'layers', label: 'مدیریت لایه‌ها' },
+                { id: 'layers', label: 'مدیریت لایه‌ها و نما' },
               ] as Array<{ id: KeyboardShortcutCategory; label: string }>
             ).map((tab) => (
               <button
@@ -112,7 +111,7 @@ export const KeyboardShortcutsModal: React.FC<KeyboardShortcutsModalProps> = ({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="جستجوی کلید (مثلاً F9، P) یا عملکرد..."
+              placeholder="جستجوی کلید (مثلاً P، V، E) یا عملکرد..."
               aria-label="جستجوی کلید میانبر"
               className="w-full pr-8 pl-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs focus:outline-none focus:border-sky-500"
             />

@@ -10,6 +10,7 @@ import {
   Power,
   RotateCcw,
   Layers,
+  Play,
 } from 'lucide-react';
 import {
   AppModule,
@@ -28,6 +29,7 @@ interface FeatureManagerModalProps {
   onSelectProfile: (profileId: TeachingProfileId) => void;
   onToggleModule: (moduleId: ModuleId, forceState?: boolean) => void;
   onToggleSubFeature: (moduleId: ModuleId, subFeatureId: string) => void;
+  onLaunchSubFeature?: (moduleId: ModuleId, subFeatureId: string) => void;
   metrics: ResourceMetrics;
   usePersianNumerals: boolean;
 }
@@ -42,6 +44,7 @@ export const FeatureManagerModal: React.FC<FeatureManagerModalProps> = ({
   onSelectProfile,
   onToggleModule,
   onToggleSubFeature,
+  onLaunchSubFeature,
   metrics,
   usePersianNumerals,
 }) => {
@@ -83,7 +86,7 @@ export const FeatureManagerModal: React.FC<FeatureManagerModalProps> = ({
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="feature-manager-title"
@@ -106,7 +109,7 @@ export const FeatureManagerModal: React.FC<FeatureManagerModalProps> = ({
                 مدیریت ویژگی‌ها و ماژول‌ها (Feature & Resource Manager)
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                هر قابلیت یا آزمایشگاهی را که نیاز ندارید خاموش کنید تا محیط کار خلوت بماند و RAM مصرف نشود.
+                هر قابلیت را می‌توانید روشن/خاموش کنید یا با دکمه «اجرا و استفاده» مستقیماً روی تخته باز کنید.
               </p>
             </div>
           </div>
@@ -173,12 +176,12 @@ export const FeatureManagerModal: React.FC<FeatureManagerModalProps> = ({
                 className="px-2.5 py-1 text-xs font-medium rounded-md text-sky-600 dark:text-sky-400 hover:bg-sky-500/10 transition-colors flex items-center gap-1 whitespace-nowrap"
               >
                 <Sparkles className="w-3.5 h-3.5" />
-                روشن کردن تمام ۱۰ ماژول
+                روشن کردن تمام ۷ ماژول
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
             {TEACHING_PROFILES.map((prof) => {
               const isSelected = activeProfileId === prof.id;
               return (
@@ -214,12 +217,12 @@ export const FeatureManagerModal: React.FC<FeatureManagerModalProps> = ({
           <div className="flex items-center gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800/80 overflow-x-auto">
             {(
               [
-                { id: 'all', label: 'همه ماژول‌ها (۱۰)' },
-                { id: 'core', label: 'بوم و حل تست (۱-۲)' },
-                { id: 'stem-labs', label: 'ریاضی، فیزیک و شیمی (۳-۵)' },
-                { id: 'humanities', label: 'زیست و ادبیات (۶)' },
-                { id: 'media-studio', label: 'ضبط، تدوین و خروجی (۷-۹)' },
-                { id: 'intelligence', label: 'هوش مصنوعی (۱۰)' },
+                { id: 'all', label: 'همه ماژول‌ها (۷)' },
+                { id: 'core', label: 'بوم، قلم و دسکتاپ (۱)' },
+                { id: 'stem-labs', label: 'ریاضی، فیزیک و شیمی (۲-۴)' },
+                { id: 'humanities', label: 'زیست و ادبیات (۵)' },
+                { id: 'media-studio', label: 'خروجی جزوه PDF و امنیت (۶)' },
+                { id: 'intelligence', label: 'دست‌نویس آفلاین و فلوچارت (۷)' },
               ] as Array<{ id: CategoryFilter; label: string }>
             ).map((tab) => (
               <button
@@ -243,7 +246,7 @@ export const FeatureManagerModal: React.FC<FeatureManagerModalProps> = ({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="جستجوی ابزار (مثلاً: کسر، سطح شیب‌دار، تله‌پرامپتر...)"
+              placeholder="جستجوی قابلیت (مثلاً: دسکتاپ، دست‌نویس، کسر...)"
               aria-label="جستجوی ماژول یا ابزار"
               className="w-full pr-9 pl-3 py-1.5 text-xs rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-sky-500"
             />
@@ -340,16 +343,16 @@ export const FeatureManagerModal: React.FC<FeatureManagerModalProps> = ({
                       return (
                         <div
                           key={sf.id}
-                          className={`p-3 rounded-lg border transition-all flex items-start justify-between gap-3 ${
+                          className={`p-3 rounded-lg border transition-all flex flex-col justify-between gap-2.5 ${
                             isSubActive
                               ? 'bg-sky-50/40 dark:bg-sky-950/20 border-sky-500/30'
                               : 'bg-slate-50/50 dark:bg-slate-900/40 border-slate-200/70 dark:border-slate-800/70'
                           }`}
                         >
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
                               <span
-                                className={`text-xs font-semibold ${
+                                className={`text-xs font-semibold block ${
                                   isSubActive
                                     ? 'text-slate-900 dark:text-slate-100'
                                     : 'text-slate-600 dark:text-slate-400'
@@ -357,33 +360,48 @@ export const FeatureManagerModal: React.FC<FeatureManagerModalProps> = ({
                               >
                                 {sf.title}
                               </span>
+                              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                                {sf.description}
+                              </p>
                             </div>
-                            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                              {sf.description}
-                            </p>
-                            <div className="flex items-center gap-2 mt-2 text-[11px] text-slate-400 dark:text-slate-500 font-mono tabular-nums">
+
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={isSubActive}
+                              aria-label={`تغییر وضعیت ${sf.title}`}
+                              onClick={() => onToggleSubFeature(mod.id, sf.id)}
+                              className={`w-9 h-5 rounded-full transition-colors relative flex items-center px-0.5 shrink-0 mt-0.5 ${
+                                isSubActive ? 'bg-sky-600' : 'bg-slate-300 dark:bg-slate-700'
+                              }`}
+                            >
+                              <span
+                                className={`w-4 h-4 rounded-full bg-white shadow-xs transition-transform ${
+                                  isSubActive ? '-translate-x-4' : 'translate-x-0'
+                                }`}
+                              />
+                            </button>
+                          </div>
+
+                          <div className="flex items-center justify-between pt-2 border-t border-slate-200/60 dark:border-slate-800/60">
+                            <div className="flex items-center gap-2 text-[10px] text-slate-400 dark:text-slate-500 font-mono tabular-nums">
                               <span>RAM: {fmt(sf.ramMb)}MB</span>
                               <span aria-hidden="true">·</span>
                               <span>CPU: {fmt(sf.cpuPct)}%</span>
                             </div>
-                          </div>
 
-                          <button
-                            type="button"
-                            role="switch"
-                            aria-checked={isSubActive}
-                            aria-label={`تغییر وضعیت ${sf.title}`}
-                            onClick={() => onToggleSubFeature(mod.id, sf.id)}
-                            className={`w-9 h-5 rounded-full transition-colors relative flex items-center px-0.5 shrink-0 mt-0.5 ${
-                              isSubActive ? 'bg-sky-600' : 'bg-slate-300 dark:bg-slate-700'
-                            }`}
-                          >
-                            <span
-                              className={`w-4 h-4 rounded-full bg-white shadow-xs transition-transform ${
-                                isSubActive ? '-translate-x-4' : 'translate-x-0'
-                              }`}
-                            />
-                          </button>
+                            {onLaunchSubFeature && (
+                              <button
+                                type="button"
+                                data-testid={`launch-subfeature-${sf.id}`}
+                                onClick={() => onLaunchSubFeature(mod.id, sf.id)}
+                                className="px-2.5 py-1 rounded-md bg-sky-600 hover:bg-sky-500 text-white text-[10px] font-bold flex items-center gap-1 transition-colors shadow-2xs"
+                              >
+                                <Play className="w-2.5 h-2.5 fill-current" />
+                                <span>اجرا و استفاده در برنامه</span>
+                              </button>
+                            )}
+                          </div>
                         </div>
                       );
                     })}
@@ -397,7 +415,7 @@ export const FeatureManagerModal: React.FC<FeatureManagerModalProps> = ({
         {/* Footer */}
         <div className="flex items-center justify-between px-6 py-3.5 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            تغییرات بلافاصله و بدون نیاز به راه‌اندازی مجدد روی بوم، نوار ابزارها و استودیوی ضبط اعمال می‌شوند.
+            با کلیک روی «اجرا و استفاده در برنامه» در هر کارت، آن قابلیت بلافاصله فعال و روی تخته یا آزمایشگاه باز می‌شود.
           </p>
           <button
             type="button"

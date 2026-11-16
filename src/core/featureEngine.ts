@@ -1,12 +1,9 @@
 export type ModuleId =
   | 'mod-1-canvas'
-  | 'mod-2-pdf-test'
   | 'mod-3-math'
   | 'mod-4-physics'
   | 'mod-5-chemistry'
   | 'mod-6-bio-lit'
-  | 'mod-7-recorder'
-  | 'mod-8-editor'
   | 'mod-9-export'
   | 'mod-10-ai';
 
@@ -40,8 +37,6 @@ export type TeachingProfileId =
   | 'physics-lab'
   | 'chemistry-lab'
   | 'bio-humanities'
-  | 'konkur-test'
-  | 'video-studio'
   | 'full-suite';
 
 export interface TeachingProfile {
@@ -51,7 +46,7 @@ export interface TeachingProfile {
   targetAudience: string;
   enabledSubFeatureIds: string[];
   recommendedBackground: CanvasBackgroundId;
-  recommendedLabTab?: 'math' | 'physics' | 'chemistry' | 'humanities' | 'konkur';
+  recommendedLabTab?: 'math' | 'physics' | 'chemistry' | 'humanities';
 }
 
 export type CanvasBackgroundId =
@@ -72,7 +67,7 @@ export const INITIAL_MODULES: AppModule[] = [
     title: 'ماژول ۱: بوم، فضای کار و موتور نوشتاری',
     shortTitle: 'بوم و قلم هوشمند',
     category: 'core',
-    description: 'بوم بی‌نهایت و صفحه‌بندی شده، لایه‌بندی فتوشاپی، تثبیت‌کننده دستخط، قلم لیزری و تشخیص شکل',
+    description: 'بوم بی‌نهایت و صفحه‌بندی شده، لایه‌بندی فتوشاپی، تثبیت‌کننده دستخط، قلم لیزری، تشخیص اشکال چندضلعی و نوشتن روی دسکتاپ',
     enabled: true,
     baseRamMb: 65,
     subFeatures: [
@@ -115,8 +110,8 @@ export const INITIAL_MODULES: AppModule[] = [
       {
         id: 'hold-to-snap-shapes',
         moduleId: 'mod-1-canvas',
-        title: 'تشخیص هوشمند شکل (Hold to Snap) و کانکتورها',
-        description: 'نگه داشتن قلم در انتهای ترسیم برای تبدیل به اشکال هندسی صاف و فلش کشسان',
+        title: 'تشخیص خودکار اشکال هندسی و چندضلعی‌ها (۵، ۶ و ۸ ضلعی)',
+        description: 'تبدیل خودکار ترسیم دست‌آزاد به خط، مثلث، مربع، مستطیل، لوزی، ذوزنقه، پنج‌ضلعی، شش‌ضلعی، هشت‌ضلعی، دایره و بیضی',
         enabled: true,
         ramMb: 22,
         cpuPct: 2,
@@ -124,9 +119,9 @@ export const INITIAL_MODULES: AppModule[] = [
       {
         id: 'split-screen-minimap',
         moduleId: 'mod-1-canvas',
-        title: 'تقسیم صفحه (Split Screen) و نقشه کوچک (Minimap)',
-        description: 'نمایش همزمان PDF و تخته در کنار هم به همراه رادار جابه‌جایی سریع',
-        enabled: false,
+        title: 'نمایش PDF تمام‌صفحه روی وایت‌برد و تقسیم صفحه کنار تخته',
+        description: 'وارد کردن PDF مستقیم روی تخته در حالت تمام‌صفحه یا نمایش همزمان کنار تخته',
+        enabled: true,
         ramMb: 35,
         cpuPct: 3,
       },
@@ -134,74 +129,17 @@ export const INITIAL_MODULES: AppModule[] = [
         id: 'desktop-overlay-mode',
         moduleId: 'mod-1-canvas',
         title: 'حالت نوشتن روی دسکتاپ (Desktop Overlay Mode)',
-        description: 'شفاف شدن پس‌زمینه برنامه برای خط کشیدن مستقیم روی ویندوز و مرورگر',
-        enabled: false,
+        description: 'شفاف شدن شیشه‌ای پس‌زمینه تخته برای خط کشیدن و تدریس روی نمای دسکتاپ',
+        enabled: true,
         ramMb: 30,
         cpuPct: 2.5,
       },
     ],
   },
   {
-    id: 'mod-2-pdf-test',
-    number: 2,
-    title: 'ماژول ۲: مدیریت فایل، اسکنر PDF و استودیوی حل تست',
-    shortTitle: 'استودیوی کنکور و PDF',
-    category: 'core',
-    description: 'برشگر هوشمند سوال از PDF، تمیزکننده اسکن موبایل، ابزار رد گزینه، پرده مخفی‌کننده و تایمر تست',
-    enabled: true,
-    baseRamMb: 45,
-    subFeatures: [
-      {
-        id: 'smart-question-clipper',
-        moduleId: 'mod-2-pdf-test',
-        title: 'برشگر هوشمند سوال (Smart Question Clipper)',
-        description: 'کادر کشیدن دور سوال در PDF و انتقال فوری به وسط تخته با فضای حل',
-        enabled: true,
-        ramMb: 32,
-        cpuPct: 2,
-      },
-      {
-        id: 'document-cleaner',
-        moduleId: 'mod-2-pdf-test',
-        title: 'تمیزکننده پس‌زمینه اسکن (Document Cleaner)',
-        description: 'حذف سایه و تاریکی عکس‌های موبایل از برگه‌های امتحانی و سفیدسازی پس‌زمینه',
-        enabled: false,
-        ramMb: 40,
-        cpuPct: 3.5,
-      },
-      {
-        id: 'option-elimination-tool',
-        moduleId: 'mod-2-pdf-test',
-        title: 'ابزار رد گزینه و تایید گزینه کنکور',
-        description: 'ضربدر قرمز استاندارد و کمرنگ‌سازی گزینه غلط + کادر سبز گزینه صحیح با یک کلیک',
-        enabled: true,
-        ramMb: 14,
-        cpuPct: 1,
-      },
-      {
-        id: 'screen-shade-reveal',
-        moduleId: 'mod-2-pdf-test',
-        title: 'پرده مخفی‌کننده پاسخ (Screen Shade / Reveal Box)',
-        description: 'کادر پوشاننده روی پاسخ تشریحی با قابلیت کشیدن مرحله‌به‌مرحله به پایین',
-        enabled: true,
-        ramMb: 15,
-        cpuPct: 1,
-      },
-      {
-        id: 'visual-exam-timer',
-        moduleId: 'mod-2-pdf-test',
-        title: 'تایمر و کرنومتر تصویری حل تست',
-        description: 'تایمر معکوس دایره‌ای و ساعت شنی روی تخته برای مدیریت زمان کنکور',
-        enabled: true,
-        ramMb: 10,
-        cpuPct: 0.8,
-      },
-    ],
-  },
-  {
     id: 'mod-3-math',
-    number: 3,
-    title: 'ماژول ۳: فرمول‌نویس بصری، ریاضیات، هندسه و آمار',
+    number: 2,
+    title: 'ماژول ۲: فرمول‌نویس بصری، ریاضیات، هندسه و آمار',
     shortTitle: 'آزمایشگاه ریاضی و هندسه',
     category: 'stem-labs',
     description: 'اعداد فارسی، کسر پیتزایی تعاملی، محور اعداد، مکعب‌های ارزش مکانی دبستان، تقسیم چکشی و رسم نمودار مشتق/انتگرال',
@@ -266,8 +204,8 @@ export const INITIAL_MODULES: AppModule[] = [
   },
   {
     id: 'mod-4-physics',
-    number: 4,
-    title: 'ماژول ۴: آزمایشگاه جامع فیزیک (پوشش ۱۰۰٪)',
+    number: 3,
+    title: 'ماژول ۳: آزمایشگاه جامع فیزیک (پوشش ۱۰۰٪)',
     shortTitle: 'آزمایشگاه تعاملی فیزیک',
     category: 'stem-labs',
     description: 'دیاگرام جسم آزاد و سطح شیب‌دار، نوسانگر و موج، مدار الکتریکی، مانومتر لوله U شکل و میز اپتیک و عدسی‌ها',
@@ -323,8 +261,8 @@ export const INITIAL_MODULES: AppModule[] = [
   },
   {
     id: 'mod-5-chemistry',
-    number: 5,
-    title: 'ماژول ۵: آزمایشگاه جامع شیمی (پوشش ۱۰۰٪)',
+    number: 4,
+    title: 'ماژول ۴: آزمایشگاه جامع شیمی (پوشش ۱۰۰٪)',
     shortTitle: 'آزمایشگاه تعاملی شیمی',
     category: 'stem-labs',
     description: 'جدول تناوبی و آرایش الکترونی اوربیتالی (قاعده هوند)، ساختار لوویس و VSEPR، شیمی آلی، سلول گالوانی و تیتراسیون',
@@ -371,8 +309,8 @@ export const INITIAL_MODULES: AppModule[] = [
   },
   {
     id: 'mod-6-bio-lit',
-    number: 6,
-    title: 'ماژول ۶: زیست‌شناسی، ادبیات، عربی، زبان و دروس عمومی',
+    number: 5,
+    title: 'ماژول ۵: زیست‌شناسی، ادبیات، عربی، زبان و دروس عمومی',
     shortTitle: 'زیست، ادبیات و علوم انسانی',
     category: 'humanities',
     description: 'اطلس لایه‌ای زیست و مربع پانت، تقطیع عروضی شعر، حرکت‌گذاری رنگی عربی، کیبورد فونتیک و نقشه لال جغرافیا',
@@ -418,108 +356,12 @@ export const INITIAL_MODULES: AppModule[] = [
     ],
   },
   {
-    id: 'mod-7-recorder',
-    number: 7,
-    title: 'ماژول ۷: استودیوی ضبط چندکاناله پیشرفته',
-    shortTitle: 'استودیوی ضبط ۴ کاناله',
-    category: 'media-studio',
-    description: 'ضبط مجزای ۴ کانال (تخته، وب‌کم هوشمند، میکروفون، صدای سیستم)، ضبط نامرئی رابط کاربری و تله‌پرامپتر مخفی',
-    enabled: true,
-    baseRamMb: 85,
-    subFeatures: [
-      {
-        id: 'four-channel-iso-recorder',
-        moduleId: 'mod-7-recorder',
-        title: 'ضبط ۴ کانال ایزوله (بوم، وب‌کم، میکروفون با حذف نویز، صدای سیستم)',
-        description: 'ضبط همزمان در ۴ ترک مستقل برای ویرایش جداگانه سایز وب‌کم و صدا پس از ضبط',
-        enabled: true,
-        ramMb: 55,
-        cpuPct: 6,
-      },
-      {
-        id: 'invisible-ui-recording',
-        moduleId: 'mod-7-recorder',
-        title: 'ضبط نامرئی رابط کاربری (Invisible UI Recording)',
-        description: 'نوار ابزارها و منوها برای مدرس قابل مشاهده است اما در ویدیوی خروجی دانش‌آموز ثبت نمی‌شود',
-        enabled: true,
-        ramMb: 24,
-        cpuPct: 2,
-      },
-      {
-        id: 'invisible-teleprompter',
-        moduleId: 'mod-7-recorder',
-        title: 'تله‌پرامپتر مخفی (Invisible Teleprompter)',
-        description: 'نمایش متن سناریو و نکات جلسه روی مانیتور استاد بدون افتادن در ویدیوی ضبط‌شده',
-        enabled: false,
-        ramMb: 16,
-        cpuPct: 1,
-      },
-      {
-        id: 'spotlight-cinematic-zoom',
-        moduleId: 'mod-7-recorder',
-        title: 'نورافکن تمرکز (Spotlight) و زوم سینمایی خودکار',
-        description: 'تاریک شدن ملایم صفحه به جز دایره روشن دور نوک قلم + نمایش کلیدهای میانبر',
-        enabled: false,
-        ramMb: 20,
-        cpuPct: 2,
-      },
-    ],
-  },
-  {
-    id: 'mod-8-editor',
-    number: 8,
-    title: 'ماژول ۸: ویرایشگر ویدیو و ساخت کلیپ داخلی',
-    shortTitle: 'ویرایشگر ویدیو چندلایه',
-    category: 'media-studio',
-    description: 'تایم‌لاین ۴ کاناله، حذف خودکار سکوت‌ها، تند کردن هوشمند نوشتن، زیرنویس خودکار و افکت‌های کنکوری',
-    enabled: true,
-    baseRamMb: 90,
-    subFeatures: [
-      {
-        id: 'multitrack-timeline-editor',
-        moduleId: 'mod-8-editor',
-        title: 'تایم‌لاین چندلایه حرفه‌ای (Multi-Track Timeline & Standalone)',
-        description: 'برش، جابه‌جایی لایه وب‌کم در ثانیه‌های مختلف، کنترل سرعت و ایمپورت ویدیوی خارجی',
-        enabled: true,
-        ramMb: 60,
-        cpuPct: 5,
-      },
-      {
-        id: 'auto-cut-silence-speedup',
-        moduleId: 'mod-8-editor',
-        title: 'حذف خودکار سکوت‌ها و تند کردن هوشمند نوشتن (۲× و ۴×)',
-        description: 'تشخیص سکوت از روی موج صدا و افزایش سرعت بخش‌های نوشتن طولانی بدون تغییر زیر و بمی صدا',
-        enabled: true,
-        ramMb: 35,
-        cpuPct: 4,
-      },
-      {
-        id: 'auto-captions-persian',
-        moduleId: 'mod-8-editor',
-        title: 'تولید زیرنویس خودکار فارسی و انگلیسی (Auto-Captions)',
-        description: 'تبدیل گفتار مدرس به زیرنویس استایل‌دار قابل ویرایش روی تایم‌لاین',
-        enabled: false,
-        ramMb: 45,
-        cpuPct: 4.5,
-      },
-      {
-        id: 'educational-sfx-callouts',
-        moduleId: 'mod-8-editor',
-        title: 'کتابخانه مهرهای متحرک کنکوری، افکت صوتی (SFX) و Audio Ducking',
-        description: 'مهرهای «نکته کنکوری!»، «دام آموزشی!»، صدای دینگ/تیک‌تاک و کم شدن خودکار موزیک هنگام صحبت',
-        enabled: true,
-        ramMb: 28,
-        cpuPct: 2,
-      },
-    ],
-  },
-  {
     id: 'mod-9-export',
-    number: 9,
-    title: 'ماژول ۹: خروجی‌های هوشمند، تبدیل فرمت و امنیت محتوا',
-    shortTitle: 'خروجی PDF، ریلز و امنیت',
+    number: 6,
+    title: 'ماژول ۶: خروجی جزوه PDF، چاپ استاندارد و امنیت محتوا',
+    shortTitle: 'خروجی جزوه PDF و امنیت',
     category: 'media-studio',
-    description: 'خروجی خودکار جزوه PDF جلسه همراه با ویدیو، تبدیل ۱۶:۹ به ۹:۱۶ (ریلز و شورتس) و واترمارک شناور ضد سرقت',
+    description: 'خروجی خودکار جزوه PDF جلسه، قالب‌های چاپی A4 و واترمارک شناور ضد سرقت',
     enabled: true,
     baseRamMb: 40,
     subFeatures: [
@@ -527,25 +369,16 @@ export const INITIAL_MODULES: AppModule[] = [
         id: 'one-click-class-notes-pdf',
         moduleId: 'mod-9-export',
         title: 'خروجی خودکار «جزوه PDF جلسه» (One-Click Class Notes PDF)',
-        description: 'تولید جزوه PDF استاندارد حاوی هدر، نام استاد، تاریخ، موضوع و شماره صفحه همزمان با رندر ویدیو',
+        description: 'تولید جزوه استاندارد حاوی هدر، نام استاد، تاریخ، موضوع و شماره صفحه با یک کلیک',
         enabled: true,
         ramMb: 22,
         cpuPct: 1.5,
       },
       {
-        id: 'reels-shorts-converter',
-        moduleId: 'mod-9-export',
-        title: 'تبدیل هوشمند افقی به عمودی (Reels & Shorts 9:16 Converter)',
-        description: 'قرارگیری خودکار وب‌کم استاد در یک‌سوم بالایی و بخش فعال تخته در دوسوم پایینی صفحه',
-        enabled: false,
-        ramMb: 35,
-        cpuPct: 3.5,
-      },
-      {
         id: 'anti-piracy-floating-watermark',
         moduleId: 'mod-9-export',
         title: 'واترمارک امنیتی و پویا ضد سرقت (Floating Watermark)',
-        description: 'حرکت آرام و زمان‌بندی‌شده کد اختصاصی و آیدی مدرس روی ویدیو برای جلوگیری از برش یا سرقت',
+        description: 'نمایش کد اختصاصی و شناسه مدرس روی تخته و جزوه برای جلوگیری از کپی غیرمجاز',
         enabled: true,
         ramMb: 15,
         cpuPct: 1,
@@ -554,40 +387,40 @@ export const INITIAL_MODULES: AppModule[] = [
   },
   {
     id: 'mod-10-ai',
-    number: 10,
-    title: 'ماژول ۱۰: دستیار هوش مصنوعی (کاملاً قابل خاموش/روشن)',
-    shortTitle: 'دستیار هوش مصنوعی (OCR)',
+    number: 7,
+    title: 'ماژول ۷: دست‌نویس آفلاین (سبک کیبورد گوگل) و فلوچارت‌ساز',
+    shortTitle: 'دست‌نویس آفلاین و فلوچارت',
     category: 'intelligence',
-    description: 'تبدیل دستخط فارسی و فرمول ریاضی به تایپ استاندارد، مرتب‌سازی لحظه‌ای دستخط و تولید فلوچارت از متن',
-    enabled: false,
-    baseRamMb: 110,
+    description: 'تشخیص آفلاین اعداد، حروف و کلمات فارسی و انگلیسی و علائم با الگوگیری از صفحه‌کلید گوگل (Gboard) + فلوچارت از متن',
+    enabled: true,
+    baseRamMb: 85,
     subFeatures: [
       {
         id: 'handwriting-math-ocr',
         moduleId: 'mod-10-ai',
-        title: 'تبدیل دستخط به متن و فرمول استاندارد (OCR & Math OCR)',
-        description: 'تشخیص دستخط فارسی، انگلیسی و معادلات ریاضی و تبدیل به LaTeX و فونت استاندارد',
-        enabled: false,
-        ramMb: 65,
-        cpuPct: 5.5,
+        title: 'پد دست‌نویس آفلاین (سبک صفحه‌کلید گوگل): اعداد، حروف و کلمات فارسی/انگلیسی',
+        description: 'تشخیص ۱۰۰٪ آفلاین اعداد فارسی (۰-۹) و انگلیسی (0-9)، حروف، نشانه‌ها و نوشتار فارسی و انگلیسی با بالاترین دقت',
+        enabled: true,
+        ramMb: 45,
+        cpuPct: 3.5,
       },
       {
         id: 'handwriting-beautifier',
         moduleId: 'mod-10-ai',
         title: 'مرتب‌سازی هوشمند دستخط (Handwriting Beautifier)',
-        description: 'صاف و خوش‌فرم کردن دستخط مدرس در لحظه با حفظ استایل نوشتاری شخصی',
-        enabled: false,
-        ramMb: 45,
-        cpuPct: 4,
+        description: 'صاف و خوش‌فرم کردن دستخط مدرس در لحظه روی تخته سفید با حفظ استایل نوشتاری شخصی',
+        enabled: true,
+        ramMb: 30,
+        cpuPct: 2.5,
       },
       {
         id: 'text-to-diagram',
         moduleId: 'mod-10-ai',
         title: 'تولید دیاگرام و فلوچارت قابل ویرایش از متن',
-        description: 'تبدیل دستور متنی مدرس به نمودار درختی و فلوچارت وکتور روی تخته سفید',
-        enabled: false,
-        ramMb: 40,
-        cpuPct: 3,
+        description: 'تبدیل دستور متنی مدرس به نمودار مرحله‌ای و فلوچارت روی تخته سفید با یک کلیک',
+        enabled: true,
+        ramMb: 28,
+        cpuPct: 2,
       },
     ],
   },
@@ -610,19 +443,19 @@ export const TEACHING_PROFILES: TeachingProfile[] = [
   {
     id: 'elementary',
     title: 'دبستان (اول تا ششم)',
-    subtitle: 'کسر پیتزایی، محور اعداد، مکعب ارزش مکانی و خط تحریری',
+    subtitle: 'کسر پیتزایی، محور اعداد، مکعب ارزش مکانی و دست‌نویس آفلاین',
     targetAudience: 'آموزگاران دوره ابتدایی',
     enabledSubFeatureIds: [
       'infinite-paginated-canvas',
       'stroke-stabilizer',
       'hold-to-snap-shapes',
+      'handwriting-math-ocr',
       'persian-math-builder',
       'interactive-fraction-widget',
       'smart-number-line',
       'elementary-base10-blocks',
       'persian-prosody-syntax',
-      'four-channel-iso-recorder',
-      'invisible-ui-recording',
+      'one-click-class-notes-pdf',
     ],
     recommendedBackground: 'lined',
     recommendedLabTab: 'math',
@@ -630,20 +463,19 @@ export const TEACHING_PROFILES: TeachingProfile[] = [
   {
     id: 'math-geometry',
     title: 'ریاضی، هندسه و حسابان',
-    subtitle: 'فرمول‌ساز، محور و مختصات، هندسه سه‌بعدی و نمودار مشتق/انتگرال',
+    subtitle: 'تشخیص چندضلعی‌ها، دست‌نویس، فرمول‌ساز، محور و نمودار مشتق/انتگرال',
     targetAudience: 'دبیران ریاضی متوسطه و اساتید دانشگاه',
     enabledSubFeatureIds: [
       'infinite-paginated-canvas',
       'photoshop-layers',
       'stroke-stabilizer',
       'hold-to-snap-shapes',
+      'handwriting-math-ocr',
       'persian-math-builder',
       'interactive-fraction-widget',
       'smart-number-line',
       'dynamic-geometry-3dnets',
       'calculus-plotter-riemann',
-      'four-channel-iso-recorder',
-      'invisible-ui-recording',
       'one-click-class-notes-pdf',
     ],
     recommendedBackground: 'grid',
@@ -659,14 +491,13 @@ export const TEACHING_PROFILES: TeachingProfile[] = [
       'photoshop-layers',
       'stroke-stabilizer',
       'hold-to-snap-shapes',
+      'handwriting-math-ocr',
       'persian-math-builder',
       'inclined-plane-fbd',
       'wave-harmonic-oscillator',
       'circuit-electromagnetism',
       'fluid-manometer-pv',
       'optics-bench-bohr',
-      'four-channel-iso-recorder',
-      'invisible-ui-recording',
       'one-click-class-notes-pdf',
     ],
     recommendedBackground: 'dots',
@@ -681,12 +512,11 @@ export const TEACHING_PROFILES: TeachingProfile[] = [
       'infinite-paginated-canvas',
       'photoshop-layers',
       'stroke-stabilizer',
+      'handwriting-math-ocr',
       'periodic-table-hund',
       'lewis-vsepr-3d',
       'organic-iupac-kit',
       'galvanic-stoichiometry-titration',
-      'four-channel-iso-recorder',
-      'invisible-ui-recording',
       'one-click-class-notes-pdf',
     ],
     recommendedBackground: 'sepia',
@@ -702,63 +532,20 @@ export const TEACHING_PROFILES: TeachingProfile[] = [
       'photoshop-layers',
       'stroke-stabilizer',
       'laser-vanishing-pen',
+      'handwriting-math-ocr',
       'biology-atlas-punnett',
       'persian-prosody-syntax',
       'arabic-harakat-conjugation',
       'english-geography-accounting',
-      'four-channel-iso-recorder',
       'one-click-class-notes-pdf',
     ],
     recommendedBackground: 'sepia',
     recommendedLabTab: 'humanities',
   },
   {
-    id: 'konkur-test',
-    title: 'استودیوی حل تست و کنکور',
-    subtitle: 'برشگر PDF، رد گزینه، پرده مخفی‌کننده پاسخ، تایمر و مهر کنکوری',
-    targetAudience: 'اساتید کنکور و برگزارکنندگان همایش‌های جمع‌بندی',
-    enabledSubFeatureIds: [
-      'infinite-paginated-canvas',
-      'photoshop-layers',
-      'stroke-stabilizer',
-      'laser-vanishing-pen',
-      'split-screen-minimap',
-      'smart-question-clipper',
-      'option-elimination-tool',
-      'screen-shade-reveal',
-      'visual-exam-timer',
-      'four-channel-iso-recorder',
-      'invisible-ui-recording',
-      'educational-sfx-callouts',
-      'one-click-class-notes-pdf',
-      'anti-piracy-floating-watermark',
-    ],
-    recommendedBackground: 'blackboard',
-    recommendedLabTab: 'konkur',
-  },
-  {
-    id: 'video-studio',
-    title: 'فقط ضبط و ویرایشگر ویدیو',
-    subtitle: 'استودیوی ۴ کاناله، حذف سکوت، زیرنویس خودکار و تبدیل ریلز ۹:۱۶',
-    targetAudience: 'تدوین‌گران آموزشی و تولیدکنندگان محتوای اینستاگرام/یوتیوب',
-    enabledSubFeatureIds: [
-      'four-channel-iso-recorder',
-      'invisible-ui-recording',
-      'invisible-teleprompter',
-      'spotlight-cinematic-zoom',
-      'multitrack-timeline-editor',
-      'auto-cut-silence-speedup',
-      'auto-captions-persian',
-      'educational-sfx-callouts',
-      'reels-shorts-converter',
-      'anti-piracy-floating-watermark',
-    ],
-    recommendedBackground: 'blackboard',
-  },
-  {
     id: 'full-suite',
-    title: 'حالت کامل (تمام ۱۰ ماژول روشن)',
-    subtitle: 'فعال‌سازی ۱۰۰٪ ابزارها، آزمایشگاه‌ها، استودیو و هوش مصنوعی',
+    title: 'حالت کامل (تمام ۷ ماژول روشن)',
+    subtitle: 'فعال‌سازی ۱۰۰٪ ابزارهای تخته، دست‌نویس آفلاین، آزمایشگاه‌ها و خروجی جزوه',
     targetAudience: 'سیستم‌های دسکتاپ قدرتمند و بررسی کامل امکانات',
     enabledSubFeatureIds: INITIAL_MODULES.flatMap((m) => m.subFeatures.map((sf) => sf.id)),
     recommendedBackground: 'grid',
@@ -810,12 +597,15 @@ export function toggleModuleMaster(
 export function toggleSubFeature(
   modules: AppModule[],
   moduleId: ModuleId,
-  subFeatureId: string
+  subFeatureId: string,
+  forceState?: boolean
 ): AppModule[] {
   return modules.map((mod) => {
     if (mod.id !== moduleId) return mod;
     const updatedSubs = mod.subFeatures.map((sf) =>
-      sf.id === subFeatureId ? { ...sf, enabled: !sf.enabled } : sf
+      sf.id === subFeatureId
+        ? { ...sf, enabled: forceState !== undefined ? forceState : !sf.enabled }
+        : sf
     );
     const anyEnabled = updatedSubs.some((sf) => sf.enabled);
     return {
@@ -933,7 +723,7 @@ export function calculateFractionMetrics(
   numerator: number,
   denominator: number
 ): FractionMetrics {
-  const safeDenom = Math.max(1, Math.min(24, Math.round(denominator)));
+  const safeDenom = Math.max(1, Math.min(36, Math.round(denominator)));
   const safeNum = Math.max(0, Math.min(safeDenom, Math.round(numerator)));
   const decimal = Number((safeNum / safeDenom).toFixed(3));
   const percentage = Number(((safeNum / safeDenom) * 100).toFixed(1));
@@ -999,7 +789,7 @@ export function calculateInclinedPlanePhysics(
 export interface OrbitalBox {
   subshell: string;
   orbitalIndex: number;
-  electrons: 0 | 1 | 2; // 1 = ↑, 2 = ↑↓
+  electrons: 0 | 1 | 2;
 }
 
 export interface ElectronConfigResult {
@@ -1030,7 +820,6 @@ export function generateElectronConfig(atomicNumber: number): ElectronConfigResu
     remaining -= fill;
     notationParts.push(`${sub.name}${fill}`);
 
-    // Apply Hund's rule: first place 1 spin-up electron in each orbital, then pair spin-down
     const boxes: Array<0 | 1 | 2> = new Array(sub.orbitalsCount).fill(0);
     let toPlace = fill;
     for (let i = 0; i < sub.orbitalsCount && toPlace > 0; i++) {

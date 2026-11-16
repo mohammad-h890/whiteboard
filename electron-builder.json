@@ -10,7 +10,10 @@
     "package.json"
   ],
   "extraMetadata": {
-    "main": "electron/main.cjs"
+    "main": "electron/main.cjs",
+    "version": "1.0.0",
+    "description": "DaneshBoard Studio - Smart Educational Whiteboard and Studio",
+    "author": "DaneshBoard Studio"
   },
   "win": {
     "target": [

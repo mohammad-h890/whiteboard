@@ -19,11 +19,11 @@ test('applyTeachingProfile activates only profile sub-features and updates RAM s
   assert.equal(simpleMetrics.activeSubFeaturesCount, 4);
   assert.equal(isSubFeatureActive(simpleMods, 'infinite-paginated-canvas'), true);
   assert.equal(isSubFeatureActive(simpleMods, 'handwriting-math-ocr'), false);
-  assert.ok(simpleMetrics.savedRamMb > 800, 'Simple profile should save >800MB RAM');
+  assert.ok(simpleMetrics.savedRamMb > 450, 'Simple profile should save >450MB RAM');
 
   const fullMods = applyTeachingProfile('full-suite', INITIAL_MODULES);
   const fullMetrics = calculateResourceUsage(fullMods);
-  assert.equal(fullMetrics.activeModulesCount, 10);
+  assert.equal(fullMetrics.activeModulesCount, 7);
   assert.equal(fullMetrics.savedRamMb, 0);
 });
 

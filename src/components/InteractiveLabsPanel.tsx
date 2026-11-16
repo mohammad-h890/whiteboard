@@ -1,21 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Calculator,
   Atom,
   FlaskConical,
   BookOpen,
-  CheckSquare,
   Power,
-  Plus,
-  Minus,
-  Play,
   RotateCcw,
   Eye,
   EyeOff,
-  Check,
-  X,
   ArrowLeftRight,
-  Sparkles,
   Box,
   TrendingUp,
   Zap,
@@ -35,7 +28,6 @@ import {
   calculateRiemannAndDerivative,
   VennExpressionId,
   evaluateVennRegion,
-  computeCleanedDocumentPixel,
 } from '../core/canvasAndMathEngine';
 import {
   calculateCircuitMetrics,
@@ -48,6 +40,7 @@ import {
   VseprMoleculeId,
 } from '../core/scienceAndHumanitiesEngine';
 import { calculateSupplyDemandEquilibrium } from '../core/studioAndAiEngine';
+import type { StampedBoardWidget } from './SmartWhiteboardCanvas';
 
 export type LabTabId = 'math' | 'physics' | 'chemistry' | 'humanities' | 'konkur';
 
@@ -57,7 +50,14 @@ interface InteractiveLabsPanelProps {
   onChangeTab: (tab: LabTabId) => void;
   onToggleModule: (moduleId: ModuleId, forceState?: boolean) => void;
   usePersianNumerals: boolean;
-  onStampToBoard: (title: string, summary: string, badgeColor: string) => void;
+  onStampToBoard: (
+    title: string,
+    summary: string,
+    badgeColor: string,
+    extraProps?: Partial<StampedBoardWidget>
+  ) => void;
+  stampedWidgets?: StampedBoardWidget[];
+  onUpdateStampedWidgets?: React.Dispatch<React.SetStateAction<StampedBoardWidget[]>>;
 }
 
 const SAMPLE_ELEMENTS: Array<{
@@ -98,6 +98,18 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
   const [humanitiesSection, setHumanitiesSection] = useState<
     'bio-genetics' | 'lit-arabic' | 'eng-accounting'
   >('bio-genetics');
+  const [stampNotice, setStampNotice] = useState<string | null>(null);
+
+  const handleStamp = (
+    title: string,
+    summary: string,
+    badgeColor: string,
+    extraProps?: Partial<StampedBoardWidget>
+  ) => {
+    onStampToBoard(title, summary, badgeColor, extraProps);
+    setStampNotice(`«${title}» روی تخته سفید قرار گرفت`);
+    window.setTimeout(() => setStampNotice(null), 2600);
+  };
 
   // Module 3: Math states
   const [divDividend, setDivDividend] = useState<number>(147);
@@ -108,11 +120,21 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
   const [fractionTotal, setFractionTotal] = useState<number>(5);
   const [coloredSlices, setColoredSlices] = useState<boolean[]>([true, true, true, false, false]);
   const [fractionShape, setFractionShape] = useState<'pizza' | 'bar'>('pizza');
+  const [fractionFillColor, setFractionFillColor] = useState<string>('#0ea5e9');
+  const [fractionDividerColor, setFractionDividerColor] = useState<string>('#f59e0b');
   const [showAutoFractionLabel, setShowAutoFractionLabel] = useState<boolean>(true);
   const [onesCount, setOnesCount] = useState<number>(8);
   const [tensCount, setTensCount] = useState<number>(2);
+  // Upgraded Number Line (محور اعداد کسری با طول و تقسیم‌بندی دلخواه و چند فلش منحنی)
+  const [axisMin, setAxisMin] = useState<number>(0);
+  const [axisMax, setAxisMax] = useState<number>(10);
+  const [axisSubdivisions, setAxisSubdivisions] = useState<number>(4);
   const [jumpStart, setJumpStart] = useState<number>(1);
-  const [jumpStep, setJumpStep] = useState<number>(4);
+  const [jumpStep, setJumpStep] = useState<number>(3);
+  const [axisJumps, setAxisJumps] = useState<Array<{ from: number; to: number; color?: string }>>([
+    { from: 0, to: 2.5, color: '#f59e0b' },
+    { from: 2.5, to: 6, color: '#10b981' },
+  ]);
   const [calcFn, setCalcFn] = useState<MathFunctionId>('parabola');
   const [tangentX, setTangentX] = useState<number>(2);
   const [riemannN, setRiemannN] = useState<number>(8);
@@ -131,15 +153,13 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
   // Circuit & U-Tube Manometer
   const [circuitMode, setCircuitMode] = useState<'series' | 'parallel'>('series');
   const [circuitVoltage, setCircuitVoltage] = useState<number>(12);
-  const [r1Ohm, setR1Ohm] = useState<number>(4);
-  const [r2Ohm, setR2Ohm] = useState<number>(2);
+  const [r1Ohm] = useState<number>(4);
+  const [r2Ohm] = useState<number>(2);
   const [manometerRhoRight, setManometerRhoRight] = useState<number>(2.0);
-  const [manometerHLeft, setManometerHLeft] = useState<number>(24);
+  const [manometerHLeft] = useState<number>(24);
   // Optics, Snell's Law & Bohr Atom
-  const [opticsObjectDist, setOpticsObjectDist] = useState<number>(45);
-  const [opticsFocalLen, setOpticsFocalLen] = useState<number>(22);
-  const [snellN1, setSnellN1] = useState<number>(1.5);
-  const [snellN2, setSnellN2] = useState<number>(1.0);
+  const [snellN1] = useState<number>(1.5);
+  const [snellN2] = useState<number>(1.0);
   const [snellAngle1, setSnellAngle1] = useState<number>(35);
   const [bohrNi, setBohrNi] = useState<number>(3);
   const [bohrNf, setBohrNf] = useState<number>(2);
@@ -148,12 +168,10 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
   const [selectedZ, setSelectedZ] = useState<number>(8);
   const [vseprId, setVseprId] = useState<VseprMoleculeId>('H2O');
   const [organicChainLen, setOrganicChainLen] = useState<number>(5);
-  const [organicGroup, setOrganicGroup] = useState<string>('الکل (-OH) → پنتانول');
   const [numberedCarbons, setNumberedCarbons] = useState<boolean>(true);
   const [galvanicAnode, setGalvanicAnode] = useState<string>('Zn');
   const [galvanicCathode, setGalvanicCathode] = useState<string>('Cu');
   const [stoichCancelUnits, setStoichCancelUnits] = useState<boolean>(true);
-  const [catalystActive, setCatalystActive] = useState<boolean>(false);
   const [solutionPh, setSolutionPh] = useState<number>(7);
 
   // Module 6: Biology, Literature, Arabic, English & Accounting states
@@ -179,27 +197,8 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
   const [chemCoeffH2, setChemCoeffH2] = useState<number>(3);
   const [chemCoeffNH3, setChemCoeffNH3] = useState<number>(2);
 
-  // Module 2: Konkur Test Studio & Document Scanner Cleaner state
-  const [optionStates, setOptionStates] = useState<
-    Record<number, 'none' | 'eliminated' | 'correct'>
-  >({ 1: 'eliminated', 2: 'none', 3: 'correct', 4: 'eliminated' });
-  const [shadeRevealPercent, setShadeRevealPercent] = useState<number>(45);
-  const [examTimerSec, setExamTimerSec] = useState<number>(75);
-  const [timerRunning, setTimerRunning] = useState<boolean>(false);
-  const [scannerSensitivity, setScannerSensitivity] = useState<number>(0.84);
-  const [scannerCleaned, setScannerCleaned] = useState<boolean>(true);
-  const [uploadedScanName, setUploadedScanName] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!timerRunning) return;
-    const id = window.setInterval(() => {
-      setExamTimerSec((prev) => (prev > 0 ? prev - 1 : 0));
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, [timerRunning]);
-
   const handleFractionTotalChange = (newTotal: number) => {
-    const clamped = Math.max(2, Math.min(10, newTotal));
+    const clamped = Math.max(1, Math.min(36, newTotal));
     setFractionTotal(clamped);
     setColoredSlices((prev) => {
       const next = new Array(clamped).fill(false);
@@ -208,6 +207,13 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
       }
       return next;
     });
+  };
+
+  const handleFractionColoredCountChange = (newColored: number) => {
+    const clamped = Math.max(0, Math.min(fractionTotal, newColored));
+    setColoredSlices(
+      Array.from({ length: fractionTotal }, (_, i) => i < clamped)
+    );
   };
 
   const toggleSlice = (idx: number) => {
@@ -288,12 +294,6 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
       modId: 'mod-6-bio-lit',
       icon: <BookOpen className="w-3.5 h-3.5" />,
     },
-    {
-      id: 'konkur',
-      label: 'تست/اسکن',
-      modId: 'mod-2-pdf-test',
-      icon: <CheckSquare className="w-3.5 h-3.5" />,
-    },
   ];
 
   const renderPizzaSvg = () => {
@@ -316,22 +316,30 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
               key={idx}
               d={d}
               onClick={() => toggleSlice(idx)}
-              className={`cursor-pointer transition-colors stroke-white dark:stroke-slate-900 stroke-2 ${
-                isColored
-                  ? 'fill-sky-500 hover:fill-sky-400'
-                  : 'fill-slate-200 dark:fill-slate-800 hover:fill-slate-300 dark:hover:fill-slate-700'
-              }`}
+              fill={isColored ? fractionFillColor : 'rgba(148,163,184,0.22)'}
+              stroke={fractionDividerColor}
+              strokeWidth="2.8"
+              className="cursor-pointer transition-opacity hover:opacity-90"
             />
           );
         })}
+        <circle
+          cx={cx}
+          cy={cy}
+          r={r}
+          fill="none"
+          stroke={fractionDividerColor}
+          strokeWidth="3"
+          pointerEvents="none"
+        />
       </svg>
     );
   };
 
   return (
     <div className="flex flex-col h-full">
-      {/* Main 5 Lab Category Tabs */}
-      <div className="grid grid-cols-5 gap-1 p-1.5 bg-slate-100 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800">
+      {/* Main 4 Lab Category Tabs */}
+      <div className="grid grid-cols-4 gap-1 p-1.5 bg-slate-100 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800">
         {tabs.map((t) => {
           const active = activeTab === t.id;
           const enabled = isModEnabled(t.modId);
@@ -360,6 +368,12 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
           );
         })}
       </div>
+
+      {stampNotice && (
+        <div className="mx-3 mt-2 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-bold flex items-center justify-between shadow-sm">
+          <span>✓ {stampNotice}</span>
+        </div>
+      )}
 
       {/* Tab Content Area */}
       <div className="flex-1 overflow-y-auto p-3.5 space-y-4">
@@ -443,29 +457,37 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-slate-600 dark:text-slate-400">تعداد تقسیمات مساوی:</span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            aria-label="کاهش تقسیمات کسر"
-                            onClick={() => handleFractionTotalChange(fractionTotal - 1)}
-                            className="w-6 h-6 rounded bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 flex items-center justify-center hover:bg-slate-100"
-                          >
-                            <Minus className="w-3.5 h-3.5" />
-                          </button>
-                          <span className="font-mono font-bold text-sm w-6 text-center tabular-nums">
-                            {fmt(fractionTotal)}
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <label className="block">
+                          <span className="text-[11px] text-slate-500 block mb-0.5">
+                            صورت (تعداد رنگی):
                           </span>
-                          <button
-                            type="button"
-                            aria-label="افزایش تقسیمات کسر"
-                            onClick={() => handleFractionTotalChange(fractionTotal + 1)}
-                            className="w-6 h-6 rounded bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 flex items-center justify-center hover:bg-slate-100"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                          <input
+                            type="number"
+                            min={0}
+                            max={fractionTotal}
+                            value={coloredCount}
+                            onChange={(e) =>
+                              handleFractionColoredCountChange(Number(e.target.value))
+                            }
+                            aria-label="صورت کسر دلخواه"
+                            className="w-full px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold text-center"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-[11px] text-slate-500 block mb-0.5">
+                            مخرج (کل تقسیمات):
+                          </span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={36}
+                            value={fractionTotal}
+                            onChange={(e) => handleFractionTotalChange(Number(e.target.value))}
+                            aria-label="مخرج کسر دلخواه"
+                            className="w-full px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold text-center"
+                          />
+                        </label>
                       </div>
 
                       <div className="py-1">
@@ -545,17 +567,66 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                         </div>
                       )}
 
+                      {/* Distinct Fill Color & Partition Line Color Pickers */}
+                      <div className="grid grid-cols-2 gap-2 p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[10px]">
+                        <div>
+                          <span className="text-slate-500 block mb-1 font-semibold">
+                            رنگ داخل کسر:
+                          </span>
+                          <div className="flex items-center gap-1">
+                            {['#0ea5e9', '#10b981', '#a855f7', '#f43f5e', '#3b82f6'].map((c) => (
+                              <button
+                                key={c}
+                                type="button"
+                                onClick={() => setFractionFillColor(c)}
+                                style={{ backgroundColor: c }}
+                                aria-label={`رنگ داخل کسر ${c}`}
+                                className={`w-4 h-4 rounded-full border ${
+                                  fractionFillColor === c
+                                    ? 'scale-125 border-slate-900 dark:border-white'
+                                    : 'border-transparent'
+                                }`}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-slate-500 block mb-1 font-semibold">
+                            رنگ خطوط تقسیم‌بندی:
+                          </span>
+                          <div className="flex items-center gap-1">
+                            {['#f59e0b', '#e11d48', '#0f172a', '#10b981', '#7c3aed'].map((c) => (
+                              <button
+                                key={c}
+                                type="button"
+                                onClick={() => setFractionDividerColor(c)}
+                                style={{ backgroundColor: c }}
+                                aria-label={`رنگ خطوط تقسیم‌بندی کسر ${c}`}
+                                className={`w-4 h-4 rounded-full border ${
+                                  fractionDividerColor === c
+                                    ? 'scale-125 border-slate-900 dark:border-white'
+                                    : 'border-transparent'
+                                }`}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
                       <button
                         type="button"
                         onClick={() =>
-                          onStampToBoard(
+                          handleStamp(
                             `ابزارک کسر ${fractionShape === 'bar' ? 'نواری' : 'دایره‌ای'} (${fmt(
                               fractionMetrics.numerator
                             )}/${fmt(fractionMetrics.denominator)})`,
                             `معادل اعشاری: ${fmt(fractionMetrics.decimal)} | معادل درصدی: ${fmt(
                               fractionMetrics.percentage
                             )}٪`,
-                            '#0284c7'
+                            fractionFillColor,
+                            {
+                              dividerColor: fractionDividerColor,
+                            }
                           )
                         }
                         className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
@@ -573,19 +644,65 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                           عدد: {fmt(tensCount * 10 + onesCount)}
                         </span>
                       </div>
-                      <div className="flex items-center justify-between gap-2 pt-1">
+                      <div className="grid grid-cols-3 gap-1.5 text-[11px]">
+                        <label className="block">
+                          <span className="text-slate-500 block mb-0.5">عدد دلخواه:</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={99}
+                            value={tensCount * 10 + onesCount}
+                            onChange={(e) => {
+                              const v = Math.max(0, Math.min(99, Number(e.target.value)));
+                              setTensCount(Math.floor(v / 10));
+                              setOnesCount(v % 10);
+                            }}
+                            aria-label="عدد دلخواه ارزش مکانی"
+                            className="w-full px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold text-center"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-slate-500 block mb-0.5">ده‌تایی:</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={9}
+                            value={tensCount}
+                            onChange={(e) =>
+                              setTensCount(Math.max(0, Math.min(9, Number(e.target.value))))
+                            }
+                            aria-label="تعداد ده‌تایی دلخواه"
+                            className="w-full px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold text-center"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-slate-500 block mb-0.5">یکی:</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={20}
+                            value={onesCount}
+                            onChange={(e) =>
+                              setOnesCount(Math.max(0, Math.min(20, Number(e.target.value))))
+                            }
+                            aria-label="تعداد یکی دلخواه"
+                            className="w-full px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold text-center"
+                          />
+                        </label>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 pt-0.5">
                         <button
                           type="button"
                           onClick={handleAddOneBlock}
-                          className="flex-1 py-1.5 px-2 text-xs font-medium rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-sky-500 transition-colors"
+                          className="flex-1 py-1 px-2 text-[11px] font-medium rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-sky-500 transition-colors"
                         >
-                          + افزودن مکعب یکی ({fmt(onesCount)}/۱۰)
+                          + افزودن یکی
                         </button>
                         <button
                           type="button"
                           onClick={handleBreakTenBlock}
                           disabled={tensCount === 0}
-                          className="flex-1 py-1.5 px-2 text-xs font-medium rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-amber-500 disabled:opacity-40 transition-colors"
+                          className="flex-1 py-1 px-2 text-[11px] font-medium rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-amber-500 disabled:opacity-40 transition-colors"
                         >
                           شکستن ۱ ده‌تایی به ۱۰ یکی
                         </button>
@@ -611,90 +728,289 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                           ))}
                         </div>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStamp(
+                            `مکعب ارزش مکانی (${fmt(tensCount)}/${fmt(onesCount)})`,
+                            `${fmt(tensCount)} ده‌تایی و ${fmt(onesCount)} یکی`,
+                            '#d97706'
+                          )
+                        }
+                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                      >
+                        افزودن شکل مکعب‌ها به تخته سفید
+                      </button>
                     </div>
 
-                    <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-2">
+                    <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-2.5">
                       <div className="flex items-center justify-between text-xs">
                         <h4 className="font-bold text-slate-900 dark:text-slate-100">
-                          محور اعداد هوشمند با کمان پرش
+                          محور اعداد کسری (تعیین طول ۰ تا ۱۰، تقسیم‌بندی واحد و کمان پرش)
                         </h4>
-                        <span className="font-mono text-sky-600 dark:text-sky-400 tabular-nums">
-                          {fmt(jumpStart)} + {fmt(jumpStep)} = {fmt(jumpStart + jumpStep)}
+                        <span className="font-mono text-sky-600 dark:text-sky-400 font-bold tabular-nums">
+                          [{fmt(axisMin)} تا {fmt(axisMax)}] · هر واحد {fmt(axisSubdivisions)} قسمت
                         </span>
                       </div>
-                      <svg viewBox="0 0 260 65" className="w-full h-16">
+
+                      {/* Live Subdivided Fractional Number Line SVG Preview */}
+                      <svg viewBox="0 0 320 78" direction="ltr" className="w-full h-20 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 px-1">
                         <line
-                          x1="15"
-                          y1="45"
-                          x2="245"
-                          y2="45"
-                          className="stroke-slate-700 dark:stroke-slate-300"
-                          strokeWidth="2"
+                          x1="16"
+                          y1="48"
+                          x2="304"
+                          y2="48"
+                          className="stroke-sky-600 dark:stroke-sky-400"
+                          strokeWidth="2.4"
                         />
-                        {Array.from({ length: 9 }).map((_, idx) => {
-                          const x = 20 + idx * 27.5;
+                        {(() => {
+                          const safeMax = Math.max(axisMin + 1, axisMax);
+                          const totalU = Math.min(20, safeMax - axisMin);
+                          const subdivs = Math.max(1, Math.min(12, axisSubdivisions));
+                          const valToX = (v: number) =>
+                            22 + ((Math.max(axisMin, Math.min(safeMax, v)) - axisMin) / (safeMax - axisMin)) * 276;
+
                           return (
-                            <g key={idx}>
-                              <line
-                                x1={x}
-                                y1="40"
-                                x2={x}
-                                y2="50"
-                                className="stroke-slate-700 dark:stroke-slate-300"
-                                strokeWidth="1.5"
-                              />
-                              <text
-                                x={x}
-                                y="61"
-                                textAnchor="middle"
-                                className="fill-slate-600 dark:fill-slate-400 text-[9px] font-mono"
-                              >
-                                {fmt(idx)}
-                              </text>
-                            </g>
+                            <>
+                              {Array.from({ length: totalU + 1 }).map((_, uIdx) => {
+                                const uVal = axisMin + uIdx;
+                                const xMaj = valToX(uVal);
+                                return (
+                                  <g key={`u-${uVal}`}>
+                                    <line
+                                      x1={xMaj}
+                                      y1="39"
+                                      x2={xMaj}
+                                      y2="57"
+                                      className="stroke-sky-700 dark:stroke-sky-300"
+                                      strokeWidth="2.2"
+                                    />
+                                    <text
+                                      x={xMaj}
+                                      y="70"
+                                      textAnchor="middle"
+                                      className="fill-slate-800 dark:fill-slate-200 text-[10px] font-mono font-bold"
+                                    >
+                                      {fmt(uVal)}
+                                    </text>
+                                    {uIdx < totalU &&
+                                      subdivs > 1 &&
+                                      Array.from({ length: subdivs - 1 }).map((__, sIdx) => {
+                                        const k = sIdx + 1;
+                                        const xSub = valToX(uVal + k / subdivs);
+                                        return (
+                                          <line
+                                            key={`s-${uVal}-${k}`}
+                                            x1={xSub}
+                                            y1="43"
+                                            x2={xSub}
+                                            y2="53"
+                                            stroke="#f59e0b"
+                                            strokeWidth="1.4"
+                                          />
+                                        );
+                                      })}
+                                  </g>
+                                );
+                              })}
+                              {axisJumps.map((jmp, jIdx) => {
+                                const x1 = valToX(jmp.from);
+                                const x2 = valToX(jmp.to);
+                                const xMid = (x1 + x2) / 2;
+                                const col = jmp.color || (jIdx % 2 === 0 ? '#f59e0b' : '#10b981');
+                                return (
+                                  <g key={jIdx}>
+                                    <path
+                                      d={`M ${x1} 40 Q ${xMid} ${10 + (jIdx % 2) * 6} ${x2} 40`}
+                                      fill="none"
+                                      stroke={col}
+                                      strokeWidth="2"
+                                    />
+                                    <circle cx={x1} cy="48" r="2.8" fill={col} />
+                                    <circle cx={x2} cy="48" r="3.2" fill={col} />
+                                  </g>
+                                );
+                              })}
+                            </>
                           );
-                        })}
-                        <path
-                          d={`M ${20 + jumpStart * 27.5} 40 Q ${
-                            20 + (jumpStart + jumpStep / 2) * 27.5
-                          } 5 ${20 + Math.min(8, jumpStart + jumpStep) * 27.5} 40`}
-                          fill="none"
-                          stroke="#0284c7"
-                          strokeWidth="2"
-                          strokeDasharray="3 2"
-                        />
-                        <text
-                          x={20 + (jumpStart + jumpStep / 2) * 27.5}
-                          y="16"
-                          textAnchor="middle"
-                          className="fill-sky-600 dark:fill-sky-400 text-[10px] font-bold"
-                        >
-                          +{fmt(jumpStep)}
-                        </text>
+                        })()}
                       </svg>
-                      <div className="flex items-center gap-2 text-[11px]">
-                        <label className="flex items-center gap-1 flex-1">
-                          <span>شروع:</span>
+
+                      {/* Range (شروع و پایان محور مثلاً ۰ تا ۱۰) & Unit Fractional Subdivisions (تقسیم‌بندی هر واحد) */}
+                      <div className="grid grid-cols-3 gap-2 text-[11px]">
+                        <label className="block">
+                          <span className="text-slate-500 block mb-0.5">شروع محور:</span>
                           <input
-                            type="range"
-                            min={0}
-                            max={4}
-                            value={jumpStart}
-                            onChange={(e) => setJumpStart(Number(e.target.value))}
-                            className="w-full accent-sky-600"
+                            type="number"
+                            min={-20}
+                            max={50}
+                            value={axisMin}
+                            onChange={(e) => setAxisMin(Number(e.target.value))}
+                            aria-label="شروع محور اعداد"
+                            className="w-full px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold text-center"
                           />
                         </label>
-                        <label className="flex items-center gap-1 flex-1">
-                          <span>پرش:</span>
+                        <label className="block">
+                          <span className="text-slate-500 block mb-0.5">پایان محور (مثلاً ۱۰):</span>
                           <input
-                            type="range"
+                            type="number"
+                            min={axisMin + 1}
+                            max={axisMin + 24}
+                            value={axisMax}
+                            onChange={(e) =>
+                              setAxisMax(Math.max(axisMin + 1, Math.min(axisMin + 24, Number(e.target.value))))
+                            }
+                            aria-label="پایان محور اعداد"
+                            className="w-full px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold text-center"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-slate-500 block mb-0.5">تقسیم هر واحد (کسر):</span>
+                          <input
+                            type="number"
                             min={1}
-                            max={4}
-                            value={jumpStep}
-                            onChange={(e) => setJumpStep(Number(e.target.value))}
-                            className="w-full accent-sky-600"
+                            max={12}
+                            value={axisSubdivisions}
+                            onChange={(e) =>
+                              setAxisSubdivisions(Math.max(1, Math.min(12, Number(e.target.value))))
+                            }
+                            aria-label="تقسیم‌بندی هر واحد محور برای کسر"
+                            className="w-full px-2 py-1 rounded bg-white dark:bg-slate-900 border border-amber-400 dark:border-amber-600 font-mono font-bold text-center text-amber-700 dark:text-amber-300"
                           />
                         </label>
+                      </div>
+
+                      {/* Quick Fractional Subdivision Presets */}
+                      <div className="flex items-center gap-1 flex-wrap text-[10px]">
+                        <span className="text-slate-500">تقسیم سریع هر واحد:</span>
+                        {[
+                          { v: 1, l: '۱ (صحیح)' },
+                          { v: 2, l: '۲ (نصف ۱/۲)' },
+                          { v: 3, l: '۳ (ثلث ۱/۳)' },
+                          { v: 4, l: '۴ (ربع ۱/۴)' },
+                          { v: 5, l: '۵ (۱/۵)' },
+                          { v: 10, l: '۱۰ (اعشاری)' },
+                        ].map((p) => (
+                          <button
+                            key={p.v}
+                            type="button"
+                            onClick={() => setAxisSubdivisions(p.v)}
+                            className={`px-1.5 py-0.5 rounded border font-bold ${
+                              axisSubdivisions === p.v
+                                ? 'bg-amber-500 text-white border-amber-500'
+                                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                            }`}
+                          >
+                            {p.l}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Optional Multi-Jump Arrow Builder */}
+                      <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1.5 text-[11px]">
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-slate-600 dark:text-slate-300">
+                            فلش‌های منحنی پرش ({fmt(axisJumps.length)} فلش):
+                          </span>
+                          {axisJumps.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setAxisJumps([])}
+                              className="text-[10px] text-rose-600 dark:text-rose-400 font-bold hover:underline"
+                            >
+                              حذف فلش‌ها (برای رسم آزاد با قلم)
+                            </button>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-3 gap-1.5 items-end">
+                          <label className="block">
+                            <span className="text-[10px] text-slate-400 block">از نقطه (حتی اعشاری):</span>
+                            <input
+                              type="number"
+                              step="0.25"
+                              value={jumpStart}
+                              onChange={(e) => setJumpStart(Number(e.target.value))}
+                              aria-label="عدد شروع پرش محور"
+                              className="w-full px-1.5 py-1 rounded bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-center"
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="text-[10px] text-slate-400 block">طول پرش (+):</span>
+                            <input
+                              type="number"
+                              step="0.25"
+                              value={jumpStep}
+                              onChange={(e) => setJumpStep(Number(e.target.value))}
+                              aria-label="طول پرش روی محور"
+                              className="w-full px-1.5 py-1 rounded bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-center"
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setAxisJumps((prev) => [
+                                ...prev,
+                                {
+                                  from: jumpStart,
+                                  to: jumpStart + jumpStep,
+                                  color: prev.length % 2 === 0 ? '#f59e0b' : '#10b981',
+                                },
+                              ])
+                            }
+                            className="py-1 px-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px]"
+                          >
+                            + افزودن فلش منحنی
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Two Send Buttons: 1) Clean Axis for Freehand Curved Arrows on Board, 2) Axis with Jump Arrows */}
+                      <div className="grid grid-cols-1 gap-1.5">
+                        <button
+                          type="button"
+                          data-testid="stamp-number-line-clean-btn"
+                          onClick={() =>
+                            handleStamp(
+                              `محور اعداد (${fmt(axisMin)} تا ${fmt(axisMax)} · واحد ${fmt(axisSubdivisions)} قسمتی)`,
+                              `آماده رسم آزاد چند فلش منحنی با قلم روی تخته`,
+                              '#0284c7',
+                              {
+                                axisMin,
+                                axisMax,
+                                axisSubdivisions,
+                                axisJumps: [],
+                                showAxisJumps: false,
+                              }
+                            )
+                          }
+                          className="w-full py-1.5 text-xs font-bold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                        >
+                          ارسال محور اعداد به تخته (خالی برای رسم آزاد چند فلش منحنی با قلم)
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="stamp-number-line-with-jumps-btn"
+                          onClick={() =>
+                            handleStamp(
+                              `محور اعداد (${fmt(axisMin)} تا ${fmt(axisMax)} · با ${fmt(axisJumps.length)} فلش پرش)`,
+                              `تقسیم‌بندی هر واحد: ${fmt(axisSubdivisions)} قسمت مساوی`,
+                              '#0284c7',
+                              {
+                                axisMin,
+                                axisMax,
+                                axisSubdivisions,
+                                axisJumps:
+                                  axisJumps.length > 0
+                                    ? axisJumps
+                                    : [{ from: jumpStart, to: jumpStart + jumpStep, color: '#f59e0b' }],
+                                showAxisJumps: true,
+                              }
+                            )
+                          }
+                          className="w-full py-1.5 text-[11px] font-semibold rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-700 transition-colors"
+                        >
+                          ارسال محور اعداد به همراه فلش‌های منحنی پرش به تخته
+                        </button>
                       </div>
                     </div>
 
@@ -708,63 +1024,89 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                           {fmt(String(clockHour).padStart(2, '0'))}:{fmt(String(clockMinute).padStart(2, '0'))}
                         </span>
                       </div>
-                      <div className="grid grid-cols-2 gap-2 items-center">
-                        <div className="space-y-1.5 text-[11px]">
-                          <label className="block">
-                            <span className="text-slate-500">ساعت ({fmt(clockHour)}):</span>
-                            <input
-                              type="range"
-                              min={1}
-                              max={12}
-                              value={clockHour}
-                              onChange={(e) => setClockHour(Number(e.target.value))}
-                              className="w-full accent-sky-600"
-                            />
-                          </label>
-                          <label className="block">
-                            <span className="text-slate-500">دقیقه ({fmt(clockMinute)}):</span>
-                            <input
-                              type="range"
-                              min={0}
-                              max={55}
-                              step={5}
-                              value={clockMinute}
-                              onChange={(e) => setClockMinute(Number(e.target.value))}
-                              className="w-full accent-sky-600"
-                            />
-                          </label>
+                      <div className="grid grid-cols-3 gap-1.5 text-[11px]">
+                        <label className="block">
+                          <span className="text-slate-500 block mb-0.5">ساعت (۱-۱۲):</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={12}
+                            value={clockHour}
+                            onChange={(e) =>
+                              setClockHour(Math.max(1, Math.min(12, Number(e.target.value))))
+                            }
+                            aria-label="ساعت دلخواه"
+                            className="w-full px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold text-center"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-slate-500 block mb-0.5">دقیقه (۰-۵۹):</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={59}
+                            value={clockMinute}
+                            onChange={(e) =>
+                              setClockMinute(Math.max(0, Math.min(59, Number(e.target.value))))
+                            }
+                            aria-label="دقیقه دلخواه"
+                            className="w-full px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold text-center"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-slate-500 block mb-0.5">تعداد چوب‌خط:</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={35}
+                            value={tallyCount}
+                            onChange={(e) =>
+                              setTallyCount(Math.max(1, Math.min(35, Number(e.target.value))))
+                            }
+                            aria-label="تعداد چوب‌خط دلخواه"
+                            className="w-full px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold text-center"
+                          />
+                        </label>
+                      </div>
+                      <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center">
+                        <div className="flex flex-wrap items-center justify-center gap-1.5 font-mono text-xs font-bold text-amber-600 dark:text-amber-400">
+                          {Array.from({ length: Math.floor(tallyCount / 5) }).map((_, i) => (
+                            <span key={i} className="px-1 rounded bg-amber-500/10 border border-amber-500/30">
+                              ||||̸
+                            </span>
+                          ))}
+                          {tallyCount % 5 > 0 && <span>{'|'.repeat(tallyCount % 5)}</span>}
                         </div>
-                        <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center space-y-1">
-                          <span className="text-[10px] text-slate-400 block">
-                            چوب‌خط پنج‌تایی ({fmt(tallyCount)})
-                          </span>
-                          <div className="flex items-center justify-center gap-1.5 font-mono text-xs font-bold text-amber-600 dark:text-amber-400">
-                            {Array.from({ length: Math.floor(tallyCount / 5) }).map((_, i) => (
-                              <span key={i} className="px-1 rounded bg-amber-500/10 border border-amber-500/30">
-                                ||||̸
-                              </span>
-                            ))}
-                            {tallyCount % 5 > 0 && (
-                              <span>{'|'.repeat(tallyCount % 5)}</span>
-                            )}
-                          </div>
-                          <div className="flex justify-center gap-1 pt-0.5">
-                            <button
-                              type="button"
-                              onClick={() => setTallyCount((c) => Math.max(1, c - 1))}
-                              className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[10px]"
-                            >
-                              −
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setTallyCount((c) => Math.min(25, c + 1))}
-                              className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[10px]"
-                            >
-                              +
-                            </button>
-                          </div>
-                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleStamp(
+                              `ساعت آموزشی (${fmt(clockHour)}/${fmt(clockMinute)})`,
+                              `${fmt(String(clockHour).padStart(2, '0'))}:${fmt(
+                                String(clockMinute).padStart(2, '0')
+                              )}`,
+                              '#0284c7'
+                            )
+                          }
+                          className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                        >
+                          افزودن شکل ساعت به تخته
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleStamp(
+                              `چوب‌خط (${fmt(tallyCount)}/5)`,
+                              `تعداد چوب‌خط: ${fmt(tallyCount)}`,
+                              '#d97706'
+                            )
+                          }
+                          className="w-full py-1.5 text-xs font-semibold rounded-lg bg-amber-600 text-white hover:bg-amber-500 transition-colors"
+                        >
+                          افزودن شکل چوب‌خط به تخته
+                        </button>
                       </div>
                     </div>
                   </>
@@ -817,7 +1159,7 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                       <button
                         type="button"
                         onClick={() =>
-                          onStampToBoard(
+                          handleStamp(
                             `فرمول ریاضی: (${formulaNumer}) / (${formulaDenom})`,
                             `رادیکال: √(${radicand}) | انتگرال معین روی بازه [۰, ۴]`,
                             '#0284c7'
@@ -840,7 +1182,7 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                             type="number"
                             value={divDividend}
                             onChange={(e) => setDivDividend(Math.max(1, Number(e.target.value)))}
-                            className="w-full mt-0.5 px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono"
+                            className="w-full mt-0.5 px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono font-bold text-center"
                           />
                         </label>
                         <label className="block">
@@ -849,48 +1191,80 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                             type="number"
                             value={divDivisor}
                             onChange={(e) => setDivDivisor(Math.max(1, Number(e.target.value)))}
-                            className="w-full mt-0.5 px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono"
+                            className="w-full mt-0.5 px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono font-bold text-center"
                           />
                         </label>
                       </div>
 
-                      <div className="p-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-mono text-xs">
-                        <div className="grid grid-cols-2 items-start">
-                          <div className="pl-3 space-y-1 text-left">
-                            <div className="font-bold text-slate-900 dark:text-slate-100">
-                              {fmt(divDividend)}
-                            </div>
-                            <div className="text-rose-600 dark:text-rose-400 border-b border-slate-300 dark:border-slate-700 pb-0.5">
-                              − {fmt(divProduct)}
-                            </div>
-                            <div className="font-bold text-emerald-600 dark:text-emerald-400">
-                              باقی‌مانده: {fmt(divRemainder)}
-                            </div>
-                          </div>
-                          <div className="border-r-2 border-slate-800 dark:border-slate-200 pr-3 space-y-1">
-                            <div className="border-b-2 border-slate-800 dark:border-slate-200 pb-1 font-bold text-sky-600 dark:text-sky-400">
-                              {fmt(divDivisor)} (مقسوم‌علیه)
-                            </div>
-                            <div className="pt-1 font-bold text-amber-600 dark:text-amber-400">
-                              {fmt(divQuotient)} (خارج‌قسمت)
-                            </div>
-                          </div>
-                        </div>
+                      {/* Authentic Textbook Iranian Long Division SVG Preview (مقسوم سمت چپ، مقسوم‌علیه و خارج‌قسمت سمت راست چکش) */}
+                      <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex justify-center">
+                        <svg viewBox="0 0 220 112" direction="ltr" className="w-56 h-28 overflow-visible">
+                          <line x1="112" y1="8" x2="112" y2="104" stroke="#0284c7" strokeWidth="3" strokeLinecap="round" />
+                          <line x1="112" y1="44" x2="204" y2="44" stroke="#0284c7" strokeWidth="3" strokeLinecap="round" />
+                          {/* Top-Left: Dividend (مقسوم) */}
+                          <text x="98" y="33" textAnchor="end" className="fill-slate-900 dark:fill-slate-100 text-xl font-extrabold font-mono">
+                            {fmt(divDividend)}
+                          </text>
+                          {/* Top-Right: Divisor (مقسوم‌علیه) */}
+                          <text x="124" y="33" textAnchor="start" className="fill-sky-600 dark:fill-sky-400 text-xl font-extrabold font-mono">
+                            {fmt(divDivisor)}
+                          </text>
+                          {/* Bottom-Right: Quotient (خارج‌قسمت) */}
+                          <text x="124" y="75" textAnchor="start" className="fill-amber-600 dark:fill-amber-400 text-xl font-extrabold font-mono">
+                            {fmt(divQuotient)}
+                          </text>
+                          {/* Subtracted Product */}
+                          <text x="98" y="63" textAnchor="end" className="fill-rose-600 dark:fill-rose-400 text-lg font-bold font-mono">
+                            − {fmt(divProduct)}
+                          </text>
+                          <line x1="24" y1="73" x2="102" y2="73" stroke="#64748b" strokeWidth="2" />
+                          {/* Remainder */}
+                          <text x="98" y="97" textAnchor="end" className="fill-emerald-600 dark:fill-emerald-400 text-lg font-extrabold font-mono">
+                            {fmt(divRemainder)}
+                          </text>
+                        </svg>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onStampToBoard(
-                            `تقسیم چکشی ایرانی: ${fmt(divDividend)} ÷ ${fmt(divDivisor)}`,
-                            `خارج‌قسمت = ${fmt(divQuotient)} | باقی‌مانده = ${fmt(divRemainder)}`,
-                            '#d97706'
-                          )
-                        }
-                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500"
-                      >
-                        ارسال تقسیم چکشی به تخته سفید
-                      </button>
+                      <div className="grid grid-cols-1 gap-1.5">
+                        <button
+                          type="button"
+                          data-testid="stamp-long-division-full-btn"
+                          onClick={() =>
+                            handleStamp(
+                              `تقسیم چکشی ایرانی: ${fmt(divDividend)} ÷ ${fmt(divDivisor)}`,
+                              `خارج‌قسمت = ${fmt(divQuotient)} | باقی‌مانده = ${fmt(divRemainder)}`,
+                              '#0284c7',
+                              {
+                                divDividend,
+                                divDivisor,
+                                hideDivisionSteps: false,
+                              }
+                            )
+                          }
+                          className="w-full py-1.5 text-xs font-bold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                        >
+                          ارسال تقسیم چکشی (کامل با مراحل حل) به تخته سفید
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="stamp-long-division-blank-btn"
+                          onClick={() =>
+                            handleStamp(
+                              `تقسیم چکشی ایرانی (تمرینی): ${fmt(divDividend)} ÷ ${fmt(divDivisor)}`,
+                              `قالب بدون جواب برای حل مرحله‌به‌مرحله با قلم روی تخته`,
+                              '#0284c7',
+                              {
+                                divDividend,
+                                divDivisor,
+                                hideDivisionSteps: true,
+                              }
+                            )
+                          }
+                          className="w-full py-1.5 text-[11px] font-semibold rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-700 transition-colors"
+                        >
+                          ارسال قالب تقسیم چکشی (بدون جواب - برای حل با قلم)
+                        </button>
+                      </div>
                     </div>
 
                     {/* Two-Pan Equation Balance Scale (ترازوی معادلات جبری) */}
@@ -914,12 +1288,21 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                         </span>
                       </div>
                       <div className="flex items-center gap-2 text-[11px]">
-                        <span className="whitespace-nowrap">مقدار مجهول (x = {fmt(eqGuessedX)}):</span>
+                        <span className="whitespace-nowrap">مقدار مجهول (x):</span>
+                        <input
+                          type="number"
+                          min={-20}
+                          max={50}
+                          value={eqGuessedX}
+                          onChange={(e) => setEqGuessedX(Number(e.target.value))}
+                          aria-label="مقدار دلخواه مجهول x"
+                          className="w-16 px-2 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold text-center"
+                        />
                         <input
                           type="range"
                           min={1}
                           max={8}
-                          value={eqGuessedX}
+                          value={Math.max(1, Math.min(8, eqGuessedX))}
                           onChange={(e) => setEqGuessedX(Number(e.target.value))}
                           className="w-full accent-sky-600"
                         />
@@ -927,6 +1310,19 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                           {fmt(2 * eqGuessedX + 3)} vs {fmt(11)}
                         </span>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStamp(
+                            `ترازوی معادلات (${fmt(2 * eqGuessedX + 3)}/11)`,
+                            `۲x + ۳ = ۱۱ (x = ${fmt(eqGuessedX)})`,
+                            '#059669'
+                          )
+                        }
+                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                      >
+                        افزودن شکل ترازو به تخته سفید
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1028,6 +1424,22 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                           className="w-full accent-sky-600"
                         />
                       </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStamp(
+                            `نمودار حسابان: مشتق و ${fmt(riemannN)} مستطیل ریمان`,
+                            `نقطه مماس x₀=${fmt(tangentX)} | شیب خط مماس f'(x₀)=${fmt(
+                              calculusMetrics.derivativeAtX
+                            )} | مساحت ریمان ≈ ${fmt(calculusMetrics.riemannArea)}`,
+                            '#0284c7'
+                          )
+                        }
+                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                      >
+                        افزودن نمودار مشتق و ریمان به تخته سفید
+                      </button>
                     </div>
 
                     <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-2.5">
@@ -1049,6 +1461,20 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                         aria-label="میزان باز شدن گسترده سه‌بعدی مکعب"
                         className="w-full accent-amber-500"
                       />
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStamp(
+                            `گسترده مکعب (${fmt(netUnfoldPct)}/100)`,
+                            `بازشدگی گسترده مکعب: ${fmt(netUnfoldPct)}٪`,
+                            '#d97706'
+                          )
+                        }
+                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-amber-600 text-white hover:bg-amber-500 transition-colors"
+                      >
+                        افزودن شکل گسترده مکعب به تخته سفید
+                      </button>
 
                       <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-2">
                         <div className="flex items-center justify-between text-xs">
@@ -1095,6 +1521,20 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                           </span>
                         </div>
                       </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStamp(
+                            `نمودار ون (${vennExpr})`,
+                            `نمایش نواحی مجموعه‌های A, B, C`,
+                            '#0284c7'
+                          )
+                        }
+                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                      >
+                        افزودن شکل نمودار ون به تخته سفید
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1313,7 +1753,7 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                     <button
                       type="button"
                       onClick={() =>
-                        onStampToBoard(
+                        handleStamp(
                           `دیاگرام جسم آزاد (θ=${fmt(angleDeg)}°, m=${fmt(massKg)}kg)`,
                           `mg·sinθ = ${fmt(physicsMetrics.mgSinTheta)}N | N = ${fmt(physicsMetrics.normalForceN)}N | a = ${fmt(physicsMetrics.accelerationMs2)} m/s²`,
                           '#059669'
@@ -1411,7 +1851,7 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                     <button
                       type="button"
                       onClick={() =>
-                        onStampToBoard(
+                        handleStamp(
                           `موج ایستاده (هماهنگ ${fmt(waveFreq)})`,
                           `تعداد گره‌ها: ${fmt(waveFreq + 1)} | تعداد شکم‌ها: ${fmt(waveFreq)} | دامنه A = ${fmt(waveAmp)}mm`,
                           '#0284c7'
@@ -1502,7 +1942,7 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                         <button
                           type="button"
                           onClick={() =>
-                            onStampToBoard(
+                            handleStamp(
                               'میدان مغناطیسی درون‌سو (⊗) و برون‌سو (⊙)',
                               `قانون دست راست | مدار ${circuitMode === 'series' ? 'سری' : 'موازی'}: I = ${fmt(circuitMetrics.totalCurrentAmp)}A`,
                               '#d97706'
@@ -1510,7 +1950,7 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                           }
                           className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500"
                         >
-                          درج مدار و مهرهای میدان (⊗ / ⊙) روی تخته
+                          افزودن شکل مدار به تخته سفید
                         </button>
                       </div>
                     </div>
@@ -1541,6 +1981,19 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                           className="w-full accent-sky-600"
                         />
                       </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStamp(
+                            `مانومتر لوله U شکل (${fmt(manometerHLeft)}/${fmt(Math.round(manometerMetrics.hRightCm))})`,
+                            `h₁=${fmt(manometerHLeft)}cm , h₂=${fmt(manometerMetrics.hRightCm)}cm`,
+                            '#0284c7'
+                          )
+                        }
+                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                      >
+                        افزودن شکل لوله U شکل به تخته سفید
+                      </button>
                     </div>
 
                     {/* Thermodynamics P-V Diagram & Gas Laws */}
@@ -1578,6 +2031,21 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                         {thermoProcess === 'isochoric' &&
                           'فرآیند هم‌حجم: خط عمودی در نمودار P-V؛ کار انجام‌شده صفر است (Q = ΔU).'}
                       </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStamp(
+                            `نمودار P-V ترمودینامیک (${thermoProcess}) و مانومتر`,
+                            `فرآیند گاز کامل | ارتفاع ستون دوم لوله U شکل: h₂ = ${fmt(
+                              manometerMetrics.hRightCm
+                            )} cm`,
+                            '#0284c7'
+                          )
+                        }
+                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                      >
+                        افزودن نمودار P-V به تخته سفید
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1617,6 +2085,19 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                             : `شکست نور (θ₂ = ${fmt(snellMetrics.refractedAngleDeg!)}°)`}
                         </span>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStamp(
+                            `شکست نور اسنل (${fmt(snellAngle1)}/${fmt(Math.round(snellMetrics.refractedAngleDeg ?? 90))})`,
+                            `θ₁ = ${fmt(snellAngle1)}°`,
+                            '#0284c7'
+                          )
+                        }
+                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                      >
+                        افزودن شکل شکست نور به تخته سفید
+                      </button>
                     </div>
 
                     {/* Bohr Atomic Levels */}
@@ -1670,6 +2151,21 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                           <span>λ ≈ {fmt(bohrMetrics.wavelengthNm)} nm</span>
                         </div>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStamp(
+                            `اتم بور (${fmt(bohrNi)}/${fmt(bohrNf)})`,
+                            `ΔE = ${fmt(bohrMetrics.deltaEnergyEv)} eV | λ ≈ ${fmt(
+                              bohrMetrics.wavelengthNm
+                            )} nm`,
+                            '#0284c7'
+                          )
+                        }
+                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                      >
+                        افزودن شکل مدل اتمی بور به تخته سفید
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1788,7 +2284,7 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                     <button
                       type="button"
                       onClick={() =>
-                        onStampToBoard(
+                        handleStamp(
                           `کارت عنصر ${currentElement.name} (${currentElement.symbol} - Z=${fmt(selectedZ)})`,
                           `آرایش الکترونی: ${electronConfig.notation} | الکترونگاتیوی پاولینگ: ${fmt(currentElement.electronegativity)}`,
                           '#7c3aed'
@@ -1844,6 +2340,19 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                           </span>
                         </div>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStamp(
+                            `هندسه مولکولی VSEPR (${vseprSpec.formula})`,
+                            `${vseprSpec.geometryFa} - ${fmt(vseprSpec.bondAngleDeg)}°`,
+                            '#0284c7'
+                          )
+                        }
+                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                      >
+                        افزودن شکل مولکول VSEPR به تخته سفید
+                      </button>
                     </div>
 
                     {/* Organic Chemistry Skeletal Chain & IUPAC Carbon Numbering */}
@@ -1914,15 +2423,15 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                       <button
                         type="button"
                         onClick={() =>
-                          onStampToBoard(
-                            `مولکول ${vseprSpec.nameFa} (${vseprSpec.formula}) و زنجیره ${fmt(organicChainLen)} کربنه`,
-                            `زاویه پیوندی: ${fmt(vseprSpec.bondAngleDeg)}° | گروه عاملی: ${organicGroup}`,
+                          handleStamp(
+                            `زنجیره کربنی آلی (${fmt(organicChainLen)}/7)`,
+                            `زنجیره ${fmt(organicChainLen)} کربنه آیوپاک`,
                             '#0284c7'
                           )
                         }
                         className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500"
                       >
-                        ارسال ساختار VSEPR و زنجیره آلی به تخته
+                        افزودن شکل زنجیره آلی به تخته سفید
                       </button>
                     </div>
                   </div>
@@ -1970,6 +2479,19 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                       <div className="p-2 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] font-mono text-center" dir="ltr">
                         {galvanicMetrics.reactionText}
                       </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStamp(
+                            `سلول گالوانی (${galvanicAnode}/${galvanicCathode})`,
+                            `ΔE° = +${fmt(galvanicMetrics.cellEmfV)} V`,
+                            '#059669'
+                          )
+                        }
+                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                      >
+                        افزودن شکل سلول گالوانی به تخته سفید
+                      </button>
                     </div>
 
                     {/* Stoichiometry Chain & Titration pH */}
@@ -2018,6 +2540,19 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                           {solutionPh < 7 ? 'اسیدی' : solutionPh === 7 ? 'خنثی' : 'بازی'}
                         </span>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStamp(
+                            `تیتراسیون اسید و باز (${fmt(solutionPh)}/14)`,
+                            `pH = ${fmt(solutionPh)}`,
+                            '#0284c7'
+                          )
+                        }
+                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                      >
+                        افزودن نمودار تیتراسیون به تخته سفید
+                      </button>
                     </div>
 
                     {/* Interactive Chemical Equation Balancer (موازنه‌گر تعاملی معادلات شیمیایی) */}
@@ -2072,6 +2607,19 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                         />
                         <span>NH₃</span>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStamp(
+                            `واکنش هابر (${fmt(chemCoeffN2)}/${fmt(chemCoeffH2)})`,
+                            `${chemCoeffN2}N₂ + ${chemCoeffH2}H₂ ⟶ ${chemCoeffNH3}NH₃`,
+                            '#059669'
+                          )
+                        }
+                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                      >
+                        افزودن معادله موازنه‌شده به تخته سفید
+                      </button>
                     </div>
                   </div>
                 )}
@@ -2150,6 +2698,19 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                           )
                         )}
                       </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStamp(
+                            `آناتومی قلب (${showAnatomyLabels ? 1 : 0}/4)`,
+                            `اطلس لایه‌ای قلب و رگ‌ها`,
+                            '#e11d48'
+                          )
+                        }
+                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                      >
+                        افزودن شکل آناتومی قلب به تخته سفید
+                      </button>
                     </div>
 
                     {/* Punnett Square Builder */}
@@ -2207,7 +2768,7 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                       <button
                         type="button"
                         onClick={() =>
-                          onStampToBoard(
+                          handleStamp(
                             `مربع پانت ژنتیک (${parent1Geno} × ${parent2Geno})`,
                             `نسبت ژنوتیپی: ${punnettMetrics.genotypeRatioText} | فنوتیپ غالب: ${fmt(punnettMetrics.dominantPhenotypePct)}٪`,
                             '#059669'
@@ -2264,6 +2825,19 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                           ? prosodySequence.join(' ')
                           : 'علامت‌های هجا را وارد کنید'}
                       </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStamp(
+                            `تقطیع عروضی (${prosodySequence.join(' ')})`,
+                            `وزن شعر فارسی: ${prosodySequence.join(' ')}`,
+                            '#7c3aed'
+                          )
+                        }
+                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                      >
+                        افزودن علامت‌های عروضی به تخته سفید
+                      </button>
                     </div>
 
                     <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-2">
@@ -2300,6 +2874,19 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                           </div>
                         )}
                       </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStamp(
+                            `اعراب عربی (${arabicWordIndex + 1}/3)`,
+                            `حرکت‌گذاری و نقش نحوی عربی`,
+                            '#059669'
+                          )
+                        }
+                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                      >
+                        افزودن عبارت عربی به تخته سفید
+                      </button>
                     </div>
 
                     {/* Arabic 14-Form Verb Conjugation Table (جدول ۱۴ صیغه فعل عربی) */}
@@ -2346,6 +2933,21 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                           </div>
                         ))}
                       </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStamp(
+                            `تقطیع عروضی و جدول صرف عربی (${
+                              arabicTense === 'madi' ? 'ماضی' : 'مضارع'
+                            })`,
+                            `وزن عروضی: ${prosodySequence.join(' ')} | ریشه: ذ-ه-ب`,
+                            '#7c3aed'
+                          )
+                        }
+                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                      >
+                        افزودن تقطیع عروضی و جدول صرف به تخته سفید
+                      </button>
                     </div>
                   </div>
                 )}
@@ -2390,6 +2992,19 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                           </>
                         )}
                       </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStamp(
+                            `فلش‌کارت زبان (Ubiquitous)`,
+                            `/juːˈbɪk.wɪ.təs/ — فراگیر، حاضر در همه جا`,
+                            '#0284c7'
+                          )
+                        }
+                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                      >
+                        افزودن به تخته سفید
+                      </button>
                     </div>
 
                     {/* Accounting T-Account */}
@@ -2401,20 +3016,45 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                         <div className="text-center font-bold border-b-2 border-slate-800 dark:border-slate-200 pb-1">
                           حساب وجه نقد و بانک
                         </div>
-                        <div className="grid grid-cols-2 divide-x divide-x-reverse divide-slate-800 dark:divide-slate-200 pt-1.5 text-center font-mono">
-                          <div>
-                            <span className="text-[10px] text-slate-400 block font-sans">بدهکار (ورودی)</span>
-                            <span className="font-bold text-emerald-600">{fmt(debitTotal)}</span>
+                        <div className="grid grid-cols-2 divide-x divide-x-reverse divide-slate-800 dark:divide-slate-200 pt-1.5 text-center font-mono gap-2">
+                          <div className="px-1">
+                            <span className="text-[10px] text-slate-400 block font-sans mb-0.5">بدهکار (ورودی)</span>
+                            <input
+                              type="number"
+                              value={debitTotal}
+                              onChange={(e) => setDebitTotal(Math.max(0, Number(e.target.value)))}
+                              aria-label="مبلغ بدهکار حساب T"
+                              className="w-full px-1.5 py-0.5 rounded bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold text-emerald-600 text-center"
+                            />
                           </div>
-                          <div>
-                            <span className="text-[10px] text-slate-400 block font-sans">بستانکار (خروجی)</span>
-                            <span className="font-bold text-rose-600">{fmt(creditTotal)}</span>
+                          <div className="px-1">
+                            <span className="text-[10px] text-slate-400 block font-sans mb-0.5">بستانکار (خروجی)</span>
+                            <input
+                              type="number"
+                              value={creditTotal}
+                              onChange={(e) => setCreditTotal(Math.max(0, Number(e.target.value)))}
+                              aria-label="مبلغ بستانکار حساب T"
+                              className="w-full px-1.5 py-0.5 rounded bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold text-rose-600 text-center"
+                            />
                           </div>
                         </div>
                         <div className="mt-2 pt-1.5 border-t border-slate-200 dark:border-slate-800 text-center font-bold text-sky-600 dark:text-sky-400">
-                          مانده بدهکار: {fmt(debitTotal - creditTotal)} میلیون ریال
+                          مانده: {fmt(debitTotal - creditTotal)} میلیون ریال
                         </div>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleStamp(
+                            `جدول حساب T (${fmt(debitTotal)}/${fmt(creditTotal)})`,
+                            `بدهکار: ${fmt(debitTotal)} | بستانکار: ${fmt(creditTotal)}`,
+                            '#0284c7'
+                          )
+                        }
+                        className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                      >
+                        افزودن شکل حساب T به تخته سفید
+                      </button>
                     </div>
 
                     {/* Silent Province Map of Iran & Economics Supply/Demand Equilibrium */}
@@ -2472,6 +3112,21 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                               aria-label="قیمت آزمایشی عرضه و تقاضا"
                               className="w-full accent-sky-600"
                             />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleStamp(
+                                  `نمودار عرضه و تقاضا (P=${fmt(econTestPrice)}) و حساب T`,
+                                  `تعادل بازار: P*=${fmt(eq.equilibriumPrice)}, Q*=${fmt(
+                                    eq.equilibriumQuantity
+                                  )} | مانده حساب T: ${fmt(debitTotal - creditTotal)}`,
+                                  '#0284c7'
+                                )
+                              }
+                              className="w-full mt-1.5 py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
+                            >
+                              افزودن نمودار عرضه و تقاضا به تخته سفید
+                            </button>
                           </div>
                         );
                       })()}
@@ -2483,240 +3138,6 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
           </>
         )}
 
-        {/* ================= MODULE 2: KONKUR TEST STUDIO & DOCUMENT SCANNER CLEANER ================= */}
-        {activeTab === 'konkur' && (
-          <>
-            {!isModEnabled('mod-2-pdf-test') ? (
-              <DisabledModuleNotice
-                title="ماژول ۲: استودیوی حل تست و اسکنر PDF غیرفعال است"
-                description="برای استفاده از رد گزینه، پرده مخفی‌کننده پاسخ، تمیزکننده اسکن موبایل و تایمر کنکور، این ماژول را فعال کنید."
-                onEnable={() => onToggleModule('mod-2-pdf-test', true)}
-              />
-            ) : (
-              <div className="space-y-3">
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 flex items-center justify-between">
-                  <div>
-                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
-                      تایمر معکوس حل تست کنکور
-                    </span>
-                    <span className="text-[11px] text-slate-500">زمان استاندارد هر تست: ۷۵ ثانیه</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-base font-bold text-amber-600 dark:text-amber-400 tabular-nums">
-                      {fmt(Math.floor(examTimerSec / 60))}:
-                      {fmt(String(examTimerSec % 60).padStart(2, '0'))}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setTimerRunning((r) => !r)}
-                      aria-label={timerRunning ? 'توقف تایمر تست' : 'شروع تایمر تست'}
-                      className="p-1.5 rounded-lg bg-sky-600 text-white hover:bg-sky-500"
-                    >
-                      <Play className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTimerRunning(false);
-                        setExamTimerSec(75);
-                      }}
-                      aria-label="ریست تایمر تست"
-                      className="p-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1">
-                      <Sparkles className="w-3.5 h-3.5 text-sky-500" />
-                      <span>تمیزکننده اسکن موبایل (Document Cleaner)</span>
-                    </h4>
-                    <button
-                      type="button"
-                      onClick={() => setScannerCleaned((c) => !c)}
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        scannerCleaned
-                          ? 'bg-emerald-600 text-white'
-                          : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-                      }`}
-                    >
-                      {scannerCleaned ? 'پس‌زمینه سفید و تمیز' : 'عکس خام سایه‌دار موبایل'}
-                    </button>
-                  </div>
-
-                  <div
-                    style={{
-                      backgroundColor:
-                        scannerCleaned &&
-                        computeCleanedDocumentPixel(135, 145, scannerSensitivity) === 255
-                          ? '#ffffff'
-                          : '#94a3b8',
-                    }}
-                    className="p-3 rounded-lg border border-slate-300 dark:border-slate-700 transition-colors text-xs text-slate-900 space-y-1"
-                  >
-                    <div className="text-[10px] text-slate-500 flex justify-between">
-                      <span>برگه امتحانی ارسالی با موبایل</span>
-                      <span>کنتراست تطبیقی: {fmt(Math.round(scannerSensitivity * 100))}٪</span>
-                    </div>
-                    <p className="font-bold">
-                      سوال ۴: معادله درجه دوم x² − ۵x + ۶ = ۰ را به روش تجزیه حل کنید.
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2 text-[11px]">
-                    <span className="text-slate-500 whitespace-nowrap">آستانه حذف سایه:</span>
-                    <input
-                      type="range"
-                      min={0.7}
-                      max={0.95}
-                      step={0.02}
-                      value={scannerSensitivity}
-                      onChange={(e) => setScannerSensitivity(Number(e.target.value))}
-                      aria-label="آستانه حذف سایه اسکن"
-                      className="w-full accent-sky-600"
-                    />
-                  </div>
-
-                  {/* Real File Input to Upload Exam Image from User Computer */}
-                  <div className="flex items-center justify-between gap-2 pt-1">
-                    <label className="flex-1 py-1.5 px-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-700 dark:text-slate-300 cursor-pointer hover:border-sky-500 text-center truncate">
-                      <span>
-                        {uploadedScanName
-                          ? `فایل بارگذاری شد: ${uploadedScanName}`
-                          : 'بارگذاری عکس سوال یا اسکن از کامپیوتر...'}
-                      </span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            setUploadedScanName(file.name);
-                            setScannerCleaned(true);
-                          }
-                        }}
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onStampToBoard(
-                          `برش سوال اسکن‌شده (${uploadedScanName ?? 'سوال ۴ معادله درجه دوم'})`,
-                          `پس‌زمینه با فیلتر تطبیقی (${fmt(Math.round(scannerSensitivity * 100))}٪) سفیدسازی شد`,
-                          '#0284c7'
-                        )
-                      }
-                      className="py-1.5 px-3 rounded-lg bg-sky-600 text-white hover:bg-sky-500 text-[11px] font-bold whitespace-nowrap"
-                    >
-                      ارسال به تخته
-                    </button>
-                  </div>
-                </div>
-
-                <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-2.5">
-                  <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                    ابزار رد گزینه و انتخاب گزینه صحیح کنکور
-                  </h4>
-                  <div className="space-y-1.5">
-                    {[
-                      { num: 1, text: '۱) شتاب حرکت همواره ثابت و برابر g است' },
-                      { num: 2, text: '۲) نیروی اصطکاک در خلاف جهت بردار سرعت تغییر نمی‌کند' },
-                      { num: 3, text: '۳) برآیند نیروهای وارد بر جسم برابر m·a در راستای سطح است' },
-                      { num: 4, text: '۴) اندازه نیروی عمودی سطح برابر وزن جسم (mg) است' },
-                    ].map((opt) => {
-                      const st = optionStates[opt.num] ?? 'none';
-                      return (
-                        <div
-                          key={opt.num}
-                          className={`p-2 rounded-lg border flex items-center justify-between gap-2 text-xs transition-all ${
-                            st === 'eliminated'
-                              ? 'bg-rose-50/40 dark:bg-rose-950/20 border-rose-300/50 dark:border-rose-900/50 opacity-50 line-through'
-                              : st === 'correct'
-                              ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-500 font-bold text-emerald-900 dark:text-emerald-200'
-                              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800'
-                          }`}
-                        >
-                          <span className="truncate">{opt.text}</span>
-                          <div className="flex items-center gap-1 shrink-0">
-                            <button
-                              type="button"
-                              aria-label={`رد گزینه ${opt.num}`}
-                              onClick={() =>
-                                setOptionStates((prev) => ({
-                                  ...prev,
-                                  [opt.num]: prev[opt.num] === 'eliminated' ? 'none' : 'eliminated',
-                                }))
-                              }
-                              className="w-6 h-6 rounded bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center hover:bg-rose-500 hover:text-white"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              aria-label={`تایید گزینه ${opt.num}`}
-                              onClick={() =>
-                                setOptionStates((prev) => ({
-                                  ...prev,
-                                  [opt.num]: prev[opt.num] === 'correct' ? 'none' : 'correct',
-                                }))
-                              }
-                              className="w-6 h-6 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center hover:bg-emerald-500 hover:text-white"
-                            >
-                              <Check className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <h4 className="font-bold text-slate-900 dark:text-slate-100">
-                      پرده مخفی‌کننده پاسخ (Screen Shade)
-                    </h4>
-                    <span className="font-mono text-slate-500 tabular-nums">
-                      باز شدن پرده: {fmt(shadeRevealPercent)}٪
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    value={shadeRevealPercent}
-                    onChange={(e) => setShadeRevealPercent(Number(e.target.value))}
-                    aria-label="میزان باز شدن پرده پاسخ تشریحی"
-                    className="w-full accent-sky-600"
-                  />
-                  <div className="relative rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-xs space-y-1.5 overflow-hidden">
-                    <p className="text-slate-700 dark:text-slate-300">
-                      <strong>گام اول:</strong> تجزیه بردار وزن به دو مؤلفه موازی و عمود بر سطح شیب‌دار.
-                    </p>
-                    <p className="text-slate-700 dark:text-slate-300">
-                      <strong>گام دوم:</strong> نوشتن قانون دوم نیوتن: ∑F = mg·sinθ − f_k = m·a
-                    </p>
-                    <p className="text-emerald-600 dark:text-emerald-400 font-bold">
-                      <strong>نتیجه نهایی:</strong> گزینه (۳) صحیح است.
-                    </p>
-                    {shadeRevealPercent < 100 && (
-                      <div
-                        style={{ height: `${100 - shadeRevealPercent}%` }}
-                        className="absolute bottom-0 inset-x-0 bg-slate-800/95 text-white flex items-center justify-center text-[11px] font-medium transition-all"
-                      >
-                        پرده مخفی‌کننده پاسخ تشریحی (اسلایدر را بکشید)
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-          </>
-        )}
       </div>
     </div>
   );

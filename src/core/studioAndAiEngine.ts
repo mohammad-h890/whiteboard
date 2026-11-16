@@ -1,131 +1,3 @@
-export interface AudioSegment {
-  id: string;
-  startSec: number;
-  endSec: number;
-  rmsDb: number;
-  type: 'speech' | 'silence' | 'filler' | 'writing-only';
-  transcript?: string;
-}
-
-export interface TimelineCutMetrics {
-  originalDurationSec: number;
-  finalDurationSec: number;
-  savedSeconds: number;
-  savedPercent: number;
-  removedSilenceCount: number;
-  removedFillerCount: number;
-  acceleratedWritingCount: number;
-}
-
-/**
- * Module 8: Computes timeline compression metrics when Auto-Cut Silences,
- * Filler-Word Removal ("اممم/آآآ"), and Smart Writing Speedup (2x/4x) are applied.
- */
-export function calculateTimelineOptimization(
-  segments: AudioSegment[],
-  options: {
-    cutSilences: boolean;
-    silenceThresholdDb: number;
-    removeFillers: boolean;
-    writingSpeedMultiplier: 1 | 2 | 4;
-  }
-): TimelineCutMetrics {
-  let originalDurationSec = 0;
-  let finalDurationSec = 0;
-  let removedSilenceCount = 0;
-  let removedFillerCount = 0;
-  let acceleratedWritingCount = 0;
-
-  for (const seg of segments) {
-    const dur = Math.max(0, seg.endSec - seg.startSec);
-    originalDurationSec += dur;
-
-    if (seg.type === 'silence' && options.cutSilences && seg.rmsDb <= options.silenceThresholdDb) {
-      removedSilenceCount += 1;
-      finalDurationSec += Math.min(0.15, dur * 0.1);
-      continue;
-    }
-
-    if (seg.type === 'filler' && options.removeFillers) {
-      removedFillerCount += 1;
-      continue;
-    }
-
-    if (seg.type === 'writing-only' && options.writingSpeedMultiplier > 1) {
-      acceleratedWritingCount += 1;
-      finalDurationSec += dur / options.writingSpeedMultiplier;
-      continue;
-    }
-
-    finalDurationSec += dur;
-  }
-
-  const roundedOriginal = Math.round(originalDurationSec * 10) / 10;
-  const roundedFinal = Math.round(finalDurationSec * 10) / 10;
-  const savedSeconds = Math.max(0, Math.round((roundedOriginal - roundedFinal) * 10) / 10);
-  const savedPercent =
-    roundedOriginal > 0
-      ? Math.round(((roundedOriginal - roundedFinal) / roundedOriginal) * 100)
-      : 0;
-
-  return {
-    originalDurationSec: roundedOriginal,
-    finalDurationSec: roundedFinal,
-    savedSeconds,
-    savedPercent,
-    removedSilenceCount,
-    removedFillerCount,
-    acceleratedWritingCount,
-  };
-}
-
-/**
- * Module 8: Calculates background music gain (in dB) using Auto Audio Ducking
- * when the teacher's microphone voice activity is detected.
- */
-export function calculateAudioDuckingGainDb(
-  baseMusicDb: number,
-  teacherVoiceRmsDb: number,
-  voiceThresholdDb: number = -35,
-  duckingAmountDb: number = 14
-): { outputMusicDb: number; isDucked: boolean } {
-  if (teacherVoiceRmsDb > voiceThresholdDb) {
-    return {
-      outputMusicDb: baseMusicDb - duckingAmountDb,
-      isDucked: true,
-    };
-  }
-  return {
-    outputMusicDb: baseMusicDb,
-    isDucked: false,
-  };
-}
-
-/**
- * Module 9: Smart 9:16 Vertical Reels Camera Cropper
- */
-export function calculateReelsPenFocusCrop(
-  canvasWidth: number,
-  canvasHeight: number,
-  penTipX: number,
-  penTipY: number,
-  cropWidth: number = 360,
-  cropHeight: number = 420
-): { cropX: number; cropY: number; cropWidth: number; cropHeight: number; zoomScale: number } {
-  const halfW = cropWidth / 2;
-  const halfH = cropHeight / 2;
-  const clampedCenterX = Math.max(halfW, Math.min(canvasWidth - halfW, penTipX));
-  const clampedCenterY = Math.max(halfH, Math.min(canvasHeight - halfH, penTipY));
-
-  return {
-    cropX: Math.round(clampedCenterX - halfW),
-    cropY: Math.round(clampedCenterY - halfH),
-    cropWidth,
-    cropHeight,
-    zoomScale: Number((canvasWidth / cropWidth).toFixed(2)),
-  };
-}
-
 export interface OcrConversionResult {
   id: string;
   rawInput: string;
@@ -136,7 +8,7 @@ export interface OcrConversionResult {
 }
 
 /**
- * Module 10: Deterministic Offline ONNX Math & Persian Handwriting OCR Engine
+ * Deterministic Offline Math & Persian Handwriting OCR Preset Engine
  */
 export function recognizeHandwritingAndMath(presetKey: string): OcrConversionResult {
   switch (presetKey) {
@@ -185,7 +57,7 @@ export interface FlowchartDiagramSpec {
 }
 
 /**
- * Module 10: Converts a Persian structured text prompt into a vector flowchart specification.
+ * Converts a Persian structured text prompt into a vector flowchart specification.
  */
 export function parseTextToFlowchart(promptText: string): FlowchartDiagramSpec {
   const parts = promptText
@@ -214,7 +86,7 @@ export function parseTextToFlowchart(promptText: string): FlowchartDiagramSpec {
 }
 
 /**
- * Module 6 (Economics): Calculates market equilibrium price (P*) and quantity (Q*)
+ * Economics: Calculates market equilibrium price (P*) and quantity (Q*)
  * for linear Demand Qd = a - bP and Supply Qs = c + dP.
  */
 export function calculateSupplyDemandEquilibrium(
@@ -261,9 +133,6 @@ export interface DaneshBoardProjectSnapshot {
   calloutStamps: string[];
 }
 
-/**
- * Serializes and validates project snapshots for `.daneshboard.json` file save/load.
- */
 export function serializeProjectSnapshot(snapshot: DaneshBoardProjectSnapshot): string {
   return JSON.stringify(snapshot, null, 2);
 }
@@ -287,7 +156,7 @@ export function parseProjectSnapshot(rawJson: string): DaneshBoardProjectSnapsho
 
 /**
  * Generates a complete, standalone RTL Persian A4 printable HTML handout document
- * for real browser download.
+ * for browser download.
  */
 export function generatePrintableClassNotesHtml(params: {
   teacherName: string;
@@ -309,7 +178,7 @@ export function generatePrintableClassNotesHtml(params: {
 
   const calloutsHtml =
     params.calloutStamps.length > 0
-      ? `<div class="callouts">نکات کنکوری جلسه: ${params.calloutStamps.join(' · ')}</div>`
+      ? `<div class="callouts">نکات مهم جلسه: ${params.calloutStamps.join(' · ')}</div>`
       : '';
 
   return `<!doctype html>
@@ -345,11 +214,11 @@ export function generatePrintableClassNotesHtml(params: {
 </html>`;
 }
 
-export type KeyboardShortcutCategory = 'all' | 'tools' | 'recording' | 'layers';
+export type KeyboardShortcutCategory = 'all' | 'tools' | 'layers';
 
 export interface KeyboardShortcutSpec {
   id: string;
-  category: 'tools' | 'recording' | 'layers';
+  category: 'tools' | 'layers';
   categoryLabel: string;
   keys: string[];
   actionTitle: string;
@@ -357,7 +226,6 @@ export interface KeyboardShortcutSpec {
 }
 
 export const KEYBOARD_SHORTCUTS_CATALOG: KeyboardShortcutSpec[] = [
-  // Tool Switching
   {
     id: 'tool-fountain',
     category: 'tools',
@@ -395,24 +263,24 @@ export const KEYBOARD_SHORTCUTS_CATALOG: KeyboardShortcutSpec[] = [
     category: 'tools',
     categoryLabel: 'ابزارهای قلم و ترسیم',
     keys: ['S'],
-    actionTitle: 'تشخیص هوشمند اشکال هندسی (Hold-to-Snap)',
-    description: 'تبدیل خودکار خط و دایره دست‌کش به شکل برداری استاندارد',
+    actionTitle: 'تشخیص هوشمند اشکال هندسی و چندضلعی‌ها',
+    description: 'تبدیل خودکار خط، دایره، بیضی، مثلث، لوزی، پنج‌ضلعی، شش‌ضلعی و هشت‌ضلعی دست‌کش به شکل استاندارد',
   },
   {
     id: 'tool-lasso',
     category: 'tools',
     categoryLabel: 'ابزارهای قلم و ترسیم',
     keys: ['V'],
-    actionTitle: 'ابزار کمند هوشمند (Lasso)',
-    description: 'انتخاب گروهی خطوط برای جابه‌جایی، تغییر رنگ یا تبدیل به متن',
+    actionTitle: 'ابزار کمند انتخاب و جابه‌جایی (Lasso)',
+    description: 'دور دستخط یا اشکال خط بکشید تا آن‌ها را انتخاب، جابه‌جا، کپی یا رنگ‌آمیزی کنید',
   },
   {
     id: 'tool-eraser',
     category: 'tools',
     categoryLabel: 'ابزارهای قلم و ترسیم',
     keys: ['E'],
-    actionTitle: 'پاک‌کن خطی تک‌لمس',
-    description: 'حذف کامل یک خط با یک لمس یا کلیک روی آن',
+    actionTitle: 'پاک‌کن هوشمند با سایز واقعی',
+    description: 'پاک کردن نقطه‌ای یا خطی با نمایش دایره اندازه واقعی پاک‌کن',
   },
   {
     id: 'tool-undo-redo',
@@ -422,48 +290,14 @@ export const KEYBOARD_SHORTCUTS_CATALOG: KeyboardShortcutSpec[] = [
     actionTitle: 'بازگشت به مرحله قبل (Undo)',
     description: 'لغو آخرین خط یا تغییر انجام‌شده روی تخته سفید',
   },
-  // Recording & Studio
-  {
-    id: 'rec-toggle',
-    category: 'recording',
-    categoryLabel: 'ضبط ۴ کاناله و تدوین',
-    keys: ['F9'],
-    actionTitle: 'شروع / توقف ضبط چندکاناله ایزوله',
-    description: 'ضبط هم‌زمان بوم، وب‌کم، میکروفون و صدای سیستم در ۴ ترک مجزا',
-  },
-  {
-    id: 'rec-webcam-mode',
-    category: 'recording',
-    categoryLabel: 'ضبط ۴ کاناله و تدوین',
-    keys: ['F10'],
-    actionTitle: 'تغییر چیدمان وب‌کم (Keyframe Switch)',
-    description: 'سوئیچ آنی بین وب‌کم دایره‌ای، تمام‌صفحه مدرس و فقط تخته',
-  },
-  {
-    id: 'rec-teleprompter',
-    category: 'recording',
-    categoryLabel: 'ضبط ۴ کاناله و تدوین',
-    keys: ['Alt', 'T'],
-    actionTitle: 'نمایش / مخفی کردن تله‌پرامپتر مخفی',
-    description: 'باز کردن پنل متن تقلب مدرس (نامرئی در فایل ویدیوی نهایی)',
-  },
   {
     id: 'rec-spotlight',
-    category: 'recording',
-    categoryLabel: 'ضبط ۴ کاناله و تدوین',
+    category: 'layers',
+    categoryLabel: 'مدیریت لایه‌ها و نما',
     keys: ['Alt', 'S'],
-    actionTitle: 'نورافکن تمرکز (Spotlight)',
+    actionTitle: 'نورافکن تمرکز روی تخته (Spotlight)',
     description: 'تاریک کردن اطراف بوم برای تمرکز دانش‌آموز روی فرمول فعلی',
   },
-  {
-    id: 'rec-callout',
-    category: 'recording',
-    categoryLabel: 'ضبط ۴ کاناله و تدوین',
-    keys: ['Alt', 'K'],
-    actionTitle: 'ثبت مهر «نکته طلایی کنکور»',
-    description: 'درج نشانگر زمانی در تایم‌لاین تدوین و روی تخته سفید',
-  },
-  // Layer & Canvas Management
   {
     id: 'layer-select-1',
     category: 'layers',
@@ -506,9 +340,6 @@ export const KEYBOARD_SHORTCUTS_CATALOG: KeyboardShortcutSpec[] = [
   },
 ];
 
-/**
- * Pure filter for KeyboardShortcutsModal by category and search query.
- */
 export function filterKeyboardShortcuts(
   category: KeyboardShortcutCategory,
   searchQuery: string
@@ -531,7 +362,7 @@ export interface RecentProjectItem {
   id: string;
   title: string;
   teacherName: string;
-  kind: 'pdf-handout' | 'session-recording';
+  kind: 'pdf-handout';
   timestampLabel: string;
   durationOrPagesLabel: string;
   profileId: string;
@@ -551,50 +382,26 @@ export const INITIAL_RECENT_PROJECTS: RecentProjectItem[] = [
   },
   {
     id: 'rec-proj-2',
-    title: 'ضبط ۴ کاناله: تحلیل تست‌های احتمالی کنکور تجربی ۱۴۰۴',
-    teacherName: 'مهندس محمدحسین احمدی',
-    kind: 'session-recording',
-    timestampLabel: '۱ ساعت پیش',
-    durationOrPagesLabel: '۱۸:۴۵ (۴ ترک ایزوله)',
-    profileId: 'konkur-studio',
-    watermarkCode: 'DB-98421',
-  },
-  {
-    id: 'rec-proj-3',
     title: 'مشتق، خط مماس و انتگرال ریمان (حسابان دوازدهم)',
     teacherName: 'دکتر سارا کریمی',
     kind: 'pdf-handout',
     timestampLabel: 'دیروز · ۱۸:۳۰',
     durationOrPagesLabel: '۴ صفحه A4 وکتور',
-    profileId: 'math-calculus',
+    profileId: 'math-geometry',
     watermarkCode: 'DB-77410',
   },
   {
-    id: 'rec-proj-4',
-    title: 'ضبط استودیویی: آرایش الکترونی، قاعده هوند و پیوند کووالانسی',
-    teacherName: 'استاد علی رضایی',
-    kind: 'session-recording',
-    timestampLabel: '۲ روز پیش',
-    durationOrPagesLabel: '۲۴:۱۰ (بدون سکوت)',
-    profileId: 'chemistry-lab',
-    watermarkCode: 'DB-55109',
-  },
-  {
-    id: 'rec-proj-5',
+    id: 'rec-proj-3',
     title: 'ژنتیک مندل، مربع پانت و تقطیع عروضی ادبیات',
     teacherName: 'دکتر مریم نوری',
     kind: 'pdf-handout',
     timestampLabel: '۳ روز پیش',
     durationOrPagesLabel: '۳ صفحه A4 وکتور',
-    profileId: 'bio-lit',
+    profileId: 'bio-humanities',
     watermarkCode: 'DB-33902',
   },
 ];
 
-/**
- * Pure helper to prepend a newly exported PDF or finished recording to the recent projects list,
- * deduplicating by title+kind and strictly keeping the last `maxItems` (default 5).
- */
 export function appendRecentProjectItem(
   existing: RecentProjectItem[],
   newItem: RecentProjectItem,
@@ -605,65 +412,3 @@ export function appendRecentProjectItem(
   );
   return [newItem, ...filtered].slice(0, Math.max(1, maxItems));
 }
-
-/**
- * Returns the complete Windows Batch (.bat) script that builds the Vite React app
- * and packages it with Electron + electron-builder into BOTH a Portable .exe and an NSIS Setup Installer .exe.
- */
-export function generateElectronBuildBatScript(): string {
-  return [
-    '@echo off',
-    'chcp 65001 >nul',
-    'title DaneshBoard Studio - Electron EXE & Installer Builder',
-    'echo ============================================================================',
-    'echo   دانش‌بورد استودیو (DaneshBoard Studio) - ساخت فایل اجرایی EXE و فایل نصبی Setup',
-    'echo   Build Both Portable .EXE and Windows NSIS Installer (.EXE) via Electron',
-    'echo ============================================================================',
-    'echo.',
-    '',
-    'REM 1. Check Node.js and NPM availability',
-    'where node >nul 2>nul',
-    'if %ERRORLEVEL% NEQ 0 (',
-    '    echo [ERROR] Node.js یافت نشد! لطفا ابتدا Node.js LTS را از nodejs.org نصب کنید.',
-    '    pause',
-    '    exit /b 1',
-    ')',
-    '',
-    'echo [1/4] در حال نصب وابستگی‌های پروژه و پکیج‌های Electron و Electron-Builder...',
-    'call npm install',
-    'call npm install --save-dev electron electron-builder',
-    'if %ERRORLEVEL% NEQ 0 (',
-    '    echo [ERROR] خطا در نصب پکیج‌های Electron.',
-    '    pause',
-    '    exit /b 1',
-    ')',
-    '',
-    'echo.',
-    'echo [2/4] در حال کامپایل و باندل کردن نسخه نهایی وب (Vite Production Build)...',
-    'call npm run build',
-    'if %ERRORLEVEL% NEQ 0 (',
-    '    echo [ERROR] خطا در ساخت باندل Vite.',
-    '    pause',
-    '    exit /b 1',
-    ')',
-    '',
-    'echo.',
-    'echo [3/4] در حال ساخت هم‌زمان فایل نصبی (NSIS Setup Installer) و نسخه پرتابل (Portable EXE)...',
-    'call npx electron-builder --win nsis portable --x64 --config electron-builder.json',
-    'if %ERRORLEVEL% NEQ 0 (',
-    '    echo [ERROR] خطا در بسته‌بندی Electron-Builder.',
-    '    pause',
-    '    exit /b 1',
-    ')',
-    '',
-    'echo.',
-    'echo ============================================================================',
-    'echo [4/4] عملیات با موفقیت کامل انجام شد!',
-    'echo   1. فایل نصبی ویندوز (Setup Installer): dist-electron\\DaneshBoard-Studio-Setup.exe',
-    'echo   2. فایل اجرایی بدون نیاز به نصب (Portable EXE): dist-electron\\DaneshBoard-Studio-Portable.exe',
-    'echo ============================================================================',
-    'if exist "dist-electron" explorer "dist-electron"',
-    'pause',
-  ].join('\r\n');
-}
-
