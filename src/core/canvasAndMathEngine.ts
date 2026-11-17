@@ -123,36 +123,38 @@ function extractClosedPolygonVertices(points: Point2D[], diag: number): Point2D[
 
   // Ensure loop is closed for RDP
   const closedInput = [...points];
-  if (
-    Math.hypot(
-      closedInput[closedInput.length - 1].x - closedInput[0].x,
-      closedInput[closedInput.length - 1].y - closedInput[0].y
-    ) >
-    diag * 0.05
-  ) {
+  const endGap = Math.hypot(
+    closedInput[closedInput.length - 1].x - closedInput[0].x,
+    closedInput[closedInput.length - 1].y - closedInput[0].y
+  );
+  if (endGap > diag * 0.04) {
     closedInput.push({ ...closedInput[0] });
+  } else {
+    closedInput[closedInput.length - 1] = { ...closedInput[0] };
   }
 
-  const rdp = simplifyPolylineRDP(closedInput, diag * 0.048);
+  const rdp = simplifyPolylineRDP(closedInput, diag * 0.045);
   let verts = rdp.slice(0, -1); // remove duplicate closing vertex
   if (verts.length < 3) return verts;
 
-  // Collapse micro-edges shorter than 0.11 * diag
+  // Collapse micro-edges shorter than 0.115 * diag by averaging adjacent close corners
   let changed = true;
   while (changed && verts.length > 3) {
     changed = false;
     for (let i = 0; i < verts.length; i++) {
+      const nextIdx = (i + 1) % verts.length;
       const curr = verts[i];
-      const next = verts[(i + 1) % verts.length];
-      if (Math.hypot(next.x - curr.x, next.y - curr.y) < diag * 0.11) {
-        verts.splice((i + 1) % verts.length, 1);
+      const next = verts[nextIdx];
+      if (Math.hypot(next.x - curr.x, next.y - curr.y) < diag * 0.115) {
+        verts[i] = { x: (curr.x + next.x) / 2, y: (curr.y + next.y) / 2 };
+        verts.splice(nextIdx, 1);
         changed = true;
         break;
       }
     }
   }
 
-  // Merge near-collinear vertices (where exterior turning angle < 25 degrees)
+  // Merge near-collinear vertices (including index 0 if user started drawing mid-edge!)
   changed = true;
   while (changed && verts.length > 3) {
     changed = false;
@@ -164,7 +166,7 @@ function extractClosedPolygonVertices(points: Point2D[], diag: number): Point2D[
       const a2 = Math.atan2(next.y - curr.y, next.x - curr.x);
       let diff = Math.abs(a2 - a1);
       if (diff > Math.PI) diff = 2 * Math.PI - diff;
-      if (diff < (25 * Math.PI) / 180) {
+      if (diff < (24 * Math.PI) / 180) {
         verts.splice(i, 1);
         changed = true;
         break;
@@ -334,46 +336,55 @@ export function recognizeGeometricShape(
       : 1.0;
     const circleError = rawCircleError * circleCornerPenalty;
 
-    // Candidate 2: Pentagon (پنج‌ضلعی - 5 corners)
-    const regPentagonUp = buildRegularPolygonVertices(5, cx, cy, rx, ry, -Math.PI / 2);
-    const regPentagonInv = buildRegularPolygonVertices(5, cx, cy, rx, ry, Math.PI / 2);
-    const bestRegPentagon =
-      evalPolygonFit(regPentagonUp) <= evalPolygonFit(regPentagonInv)
-        ? regPentagonUp
-        : regPentagonInv;
-    const regPentagonErr = evalPolygonFit(bestRegPentagon);
-    const pentagonVertices =
-      detectedCornerCount === 5 && detectedPolyErr < regPentagonErr * 0.85
-        ? detectedPolyVerts
-        : bestRegPentagon;
+    // Candidate 2: Pentagon (پنج‌ضلعی منتظم - 5 equal sides & angles around center)
+    const regPentagonUp = buildRegularPolygonVertices(5, cx, cy, avgR, avgR, -Math.PI / 2);
+    const regPentagonInv = buildRegularPolygonVertices(5, cx, cy, avgR, avgR, Math.PI / 2);
+    const regPentagonStretchedUp = buildRegularPolygonVertices(5, cx, cy, rx, ry, -Math.PI / 2);
+    const regPentagonStretchedInv = buildRegularPolygonVertices(5, cx, cy, rx, ry, Math.PI / 2);
+    const isPentagonUp =
+      evalPolygonFit(regPentagonStretchedUp) <= evalPolygonFit(regPentagonStretchedInv);
+    const pentagonVertices = isPentagonUp ? regPentagonUp : regPentagonInv;
+    const regPentagonErr = Math.min(
+      evalPolygonFit(regPentagonUp),
+      evalPolygonFit(regPentagonInv),
+      evalPolygonFit(regPentagonStretchedUp),
+      evalPolygonFit(regPentagonStretchedInv)
+    );
     const pentagonError =
       detectedCornerCount === 5
-        ? Math.min(detectedPolyErr, regPentagonErr) * 0.88
-        : regPentagonErr * 1.18;
+        ? Math.min(detectedPolyErr, regPentagonErr) * 0.85
+        : regPentagonErr * 1.15;
 
-    // Candidate 3: Hexagon (شش‌ضلعی - 6 corners)
-    const regHexPointy = buildRegularPolygonVertices(6, cx, cy, rx, ry, -Math.PI / 2);
-    const regHexFlat = buildRegularPolygonVertices(6, cx, cy, rx, ry, 0);
-    const bestRegHex =
-      evalPolygonFit(regHexPointy) <= evalPolygonFit(regHexFlat) ? regHexPointy : regHexFlat;
-    const regHexErr = evalPolygonFit(bestRegHex);
-    const hexagonVertices =
-      detectedCornerCount === 6 && detectedPolyErr < regHexErr * 0.85
-        ? detectedPolyVerts
-        : bestRegHex;
+    // Candidate 3: Hexagon (شش‌ضلعی منتظم - 6 equal sides & angles around center)
+    const regHexPointy = buildRegularPolygonVertices(6, cx, cy, avgR, avgR, -Math.PI / 2);
+    const regHexFlat = buildRegularPolygonVertices(6, cx, cy, avgR, avgR, 0);
+    const regHexStretchedPointy = buildRegularPolygonVertices(6, cx, cy, rx, ry, -Math.PI / 2);
+    const regHexStretchedFlat = buildRegularPolygonVertices(6, cx, cy, rx, ry, 0);
+    const isHexPointy =
+      evalPolygonFit(regHexStretchedPointy) <= evalPolygonFit(regHexStretchedFlat);
+    const hexagonVertices = isHexPointy ? regHexPointy : regHexFlat;
+    const regHexErr = Math.min(
+      evalPolygonFit(regHexPointy),
+      evalPolygonFit(regHexFlat),
+      evalPolygonFit(regHexStretchedPointy),
+      evalPolygonFit(regHexStretchedFlat)
+    );
     const hexagonError =
       detectedCornerCount === 6
-        ? Math.min(detectedPolyErr, regHexErr) * 0.88
-        : regHexErr * 1.18;
+        ? Math.min(detectedPolyErr, regHexErr) * 0.85
+        : regHexErr * 1.15;
 
-    // Candidate 4: Octagon (هشت‌ضلعی - 8 corners)
-    const regOctagon = buildRegularPolygonVertices(8, cx, cy, rx, ry, Math.PI / 8);
+    // Candidate 4: Octagon (هشت‌ضلعی منتظم - 8 equal sides & angles around center)
+    const regOctagon = buildRegularPolygonVertices(8, cx, cy, avgR, avgR, Math.PI / 8);
+    const regOctagonStretched = buildRegularPolygonVertices(8, cx, cy, rx, ry, Math.PI / 8);
+    const regOctagonErr = Math.min(evalPolygonFit(regOctagon), evalPolygonFit(regOctagonStretched));
     const octagonError =
-      detectedCornerCount === 8 && detectedPolyErr < rawCircleError * 0.72
-        ? detectedPolyErr * 0.9
+      (detectedCornerCount === 7 || detectedCornerCount === 8) &&
+      detectedPolyErr < rawCircleError * 0.78
+        ? Math.min(detectedPolyErr, regOctagonErr) * 0.88
         : Infinity;
 
-    // Candidate 5: Rhombus / Diamond (لوزی - 4 diamond corners)
+    // Candidate 5: Rhombus / Diamond (لوزی متقارن - 4 symmetric diamond corners)
     const rhombusCorners: Point2D[] = [
       { x: cx, y: minY },
       { x: maxX, y: cy },
@@ -384,7 +395,7 @@ export function recognizeGeometricShape(
     const rhombusError =
       cornersVisited <= 2 ? rhombusRawErr * 0.92 : rhombusRawErr * 1.35;
 
-    // Candidate 6: Rectangle fit error + 4-edge & 4-corner coverage check
+    // Candidate 6: Rectangle / Square fit error + 4-edge & 4-corner coverage check
     let rectErrSum = 0;
     let hasTop = false;
     let hasBottom = false;
@@ -403,14 +414,14 @@ export function recognizeGeometricShape(
       (allFourEdges ? 1.0 : 1.4) * (cornersVisited >= 4 ? 0.92 : cornersVisited <= 2 ? 1.35 : 1.1);
     const rectError = (rectErrSum / sampled.length) * rectPenalty;
 
-    // Candidate 7: Trapezoid / Parallelogram when 4 vertices are detected but not axis-aligned rectangle
+    // Candidate 7: Symmetrical Trapezoid / Parallelogram when 4 vertices are detected
     let customQuadType: 'trapezoid' | 'parallelogram' | null = null;
     let customQuadError = Infinity;
+    let symmetricQuadVertices: Point2D[] = bboxCorners;
     if (detectedCornerCount === 4 && detectedPolyErr < Math.min(rectError, rhombusError) * 0.82) {
-      // Sort vertices by Y to check top vs bottom width for trapezoid
       const sortedByY = [...detectedPolyVerts].sort((a, b) => a.y - b.y);
-      const topWidth = Math.abs(sortedByY[1].x - sortedByY[0].x);
-      const botWidth = Math.abs(sortedByY[3].x - sortedByY[2].x);
+      const topWidth = Math.max(20, Math.abs(sortedByY[1].x - sortedByY[0].x));
+      const botWidth = Math.max(20, Math.abs(sortedByY[3].x - sortedByY[2].x));
       const topSlope = Math.abs(sortedByY[1].y - sortedByY[0].y) / Math.max(1, topWidth);
       const botSlope = Math.abs(sortedByY[3].y - sortedByY[2].y) / Math.max(1, botWidth);
       if (
@@ -419,66 +430,51 @@ export function recognizeGeometricShape(
         Math.min(topWidth, botWidth) / Math.max(topWidth, botWidth, 1) < 0.82
       ) {
         customQuadType = 'trapezoid';
+        symmetricQuadVertices = [
+          { x: cx - topWidth / 2, y: minY },
+          { x: cx + topWidth / 2, y: minY },
+          { x: cx + botWidth / 2, y: maxY },
+          { x: cx - botWidth / 2, y: maxY },
+        ];
       } else {
         customQuadType = 'parallelogram';
+        const slant = Math.max(width * 0.18, Math.min(width * 0.32, width * 0.22));
+        symmetricQuadVertices = [
+          { x: minX + slant, y: minY },
+          { x: maxX, y: minY },
+          { x: maxX - slant, y: maxY },
+          { x: minX, y: maxY },
+        ];
       }
       customQuadError = detectedPolyErr * 0.92;
     }
 
-    // Candidate 8: Triangle fit error (test upright apex, inverted apex, AND general 3-extreme-vertex triangle)
-    const topPts = sampled.filter((p) => p.y <= minY + height * 0.22);
-    const botPts = sampled.filter((p) => p.y >= maxY - height * 0.22);
-    const topApexX =
-      topPts.length > 0 ? topPts.reduce((s, p) => s + p.x, 0) / topPts.length : cx;
-    const botApexX =
-      botPts.length > 0 ? botPts.reduce((s, p) => s + p.x, 0) / botPts.length : cx;
-
+    // Candidate 8: Symmetrical Triangle (مثلث متقارن یا قائم‌الزاویه استاندارد)
     const uprightTri: Point2D[] = [
-      { x: Math.abs(topApexX - cx) < width * 0.25 ? cx : topApexX, y: minY },
+      { x: cx, y: minY },
       { x: maxX, y: maxY },
       { x: minX, y: maxY },
     ];
     const invertedTri: Point2D[] = [
       { x: minX, y: minY },
       { x: maxX, y: minY },
-      { x: Math.abs(botApexX - cx) < width * 0.25 ? cx : botApexX, y: maxY },
+      { x: cx, y: maxY },
     ];
-
-    let v1 = sampled[0];
-    let maxD1 = -1;
-    for (const p of sampled) {
-      const d = Math.hypot(p.x - cx, p.y - cy);
-      if (d > maxD1) {
-        maxD1 = d;
-        v1 = p;
-      }
-    }
-    let v2 = sampled[0];
-    let maxD2 = -1;
-    for (const p of sampled) {
-      const d = Math.hypot(p.x - v1.x, p.y - v1.y);
-      if (d > maxD2) {
-        maxD2 = d;
-        v2 = p;
-      }
-    }
-    let v3 = sampled[0];
-    let maxD3 = -1;
-    const ldx = v2.x - v1.x;
-    const ldy = v2.y - v1.y;
-    const lLen = Math.max(1, Math.hypot(ldx, ldy));
-    for (const p of sampled) {
-      const perpDist = Math.abs(ldy * p.x - ldx * p.y + v2.x * v1.y - v2.y * v1.x) / lLen;
-      if (perpDist > maxD3) {
-        maxD3 = perpDist;
-        v3 = p;
-      }
-    }
-    const generalTri: Point2D[] = [v1, v2, v3];
+    const rightTriLeft: Point2D[] = [
+      { x: minX, y: minY },
+      { x: maxX, y: maxY },
+      { x: minX, y: maxY },
+    ];
+    const rightTriRight: Point2D[] = [
+      { x: maxX, y: minY },
+      { x: maxX, y: maxY },
+      { x: minX, y: maxY },
+    ];
 
     const uprightErr = evalPolygonFit(uprightTri);
     const invertedErr = evalPolygonFit(invertedTri);
-    const generalErr = evalPolygonFit(generalTri);
+    const rightLeftErr = evalPolygonFit(rightTriLeft);
+    const rightRightErr = evalPolygonFit(rightTriRight);
 
     let bestTriVertices = uprightTri;
     let rawTriError = uprightErr;
@@ -486,13 +482,24 @@ export function recognizeGeometricShape(
       rawTriError = invertedErr;
       bestTriVertices = invertedTri;
     }
-    if (generalErr < rawTriError * 0.9) {
-      rawTriError = generalErr;
-      bestTriVertices = generalTri;
+    if (rightLeftErr < rawTriError * 0.88) {
+      rawTriError = rightLeftErr;
+      bestTriVertices = rightTriLeft;
+    }
+    if (rightRightErr < rawTriError * 0.88) {
+      rawTriError = rightRightErr;
+      bestTriVertices = rightTriRight;
     }
     if (detectedCornerCount === 3 && detectedPolyErr < rawTriError) {
       rawTriError = detectedPolyErr;
-      bestTriVertices = detectedPolyVerts;
+      // Snap 3-corner triangle to its closest symmetrical canonical form (upright, inverted, or right-angled)
+      const candidates = [
+        { verts: uprightTri, err: uprightErr },
+        { verts: invertedTri, err: invertedErr },
+        { verts: rightTriLeft, err: rightLeftErr },
+        { verts: rightTriRight, err: rightRightErr },
+      ].sort((a, b) => a.err - b.err);
+      bestTriVertices = candidates[0].verts;
     }
 
     const triPenalty = cornersVisited >= 4 ? 1.3 : detectedCornerCount === 3 ? 0.88 : 1.0;
@@ -540,7 +547,7 @@ export function recognizeGeometricShape(
         return {
           type: 'triangle',
           snappedPoints: closePolygonPoints(bestTriVertices),
-          labelFa: 'مثلث هندسی',
+          labelFa: 'مثلث منتظم',
         };
       }
 
@@ -548,15 +555,15 @@ export function recognizeGeometricShape(
         return {
           type: 'rhombus',
           snappedPoints: closePolygonPoints(rhombusCorners),
-          labelFa: 'لوزی هندسی',
+          labelFa: 'لوزی متقارن',
         };
       }
 
       if (customQuadError === minError && customQuadType) {
         return {
           type: customQuadType,
-          snappedPoints: closePolygonPoints(detectedPolyVerts),
-          labelFa: customQuadType === 'trapezoid' ? 'ذوزنقه هندسی' : 'متوازی‌الاضلاع هندسی',
+          snappedPoints: closePolygonPoints(symmetricQuadVertices),
+          labelFa: customQuadType === 'trapezoid' ? 'ذوزنقه متقارن' : 'متوازی‌الاضلاع متقارن',
         };
       }
 
@@ -575,15 +582,24 @@ export function recognizeGeometricShape(
         return {
           type: isEllipse ? 'ellipse' : 'circle',
           snappedPoints: circlePts,
-          labelFa: isEllipse ? 'بیضی هندسی' : 'دایره استاندارد',
+          labelFa: isEllipse ? 'بیضی متقارن' : 'دایره منتظم',
         };
       }
 
+      const isSquare = width / height >= 0.82 && width / height <= 1.22;
+      const squareOrRectVerts: Point2D[] = isSquare
+        ? [
+            { x: cx - avgR, y: cy - avgR },
+            { x: cx + avgR, y: cy - avgR },
+            { x: cx + avgR, y: cy + avgR },
+            { x: cx - avgR, y: cy + avgR },
+          ]
+        : bboxCorners;
+
       return {
         type: 'rectangle',
-        snappedPoints: closePolygonPoints(bboxCorners),
-        labelFa:
-          width / height >= 0.85 && width / height <= 1.18 ? 'مربع هندسی' : 'مستطیل هندسی',
+        snappedPoints: closePolygonPoints(squareOrRectVerts),
+        labelFa: isSquare ? 'مربع منتظم' : 'مستطیل هندسی',
       };
     }
   }
@@ -2144,6 +2160,56 @@ export function findMatchingCustomShortcut(
   if (!norm) return undefined;
   return shortcuts.find((s) => normalizeShortcutCombo(s.keyCombo).toLowerCase() === norm);
 }
+
+/**
+ * Scales a single stroke's points around its geometric center (or a provided center)
+ * for keyboard resize operations (+ / -).
+ */
+export function scaleStrokePointsAboutCenter(
+  points: Point2D[],
+  scaleFactor: number,
+  customCenter?: Point2D
+): Point2D[] {
+  if (points.length === 0) return [];
+  const clampedScale = Math.max(0.25, Math.min(4.0, scaleFactor));
+  let cx = customCenter?.x ?? 0;
+  let cy = customCenter?.y ?? 0;
+  if (!customCenter) {
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const p of points) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    cx = (minX + maxX) / 2;
+    cy = (minY + maxY) / 2;
+  }
+  return points.map((p) => ({
+    x: Number((cx + (p.x - cx) * clampedScale).toFixed(1)),
+    y: Number((cy + (p.y - cy) * clampedScale).toFixed(1)),
+  }));
+}
+
+/**
+ * Scales a group of multiple strokes around their shared bounding-box center.
+ */
+export function scaleMultiStrokesAboutCommonCenter(
+  strokePointsList: Point2D[][],
+  scaleFactor: number
+): Point2D[][] {
+  const bbox = getStrokesBoundingBox(strokePointsList);
+  if (!bbox) return strokePointsList;
+  const center = {
+    x: bbox.minX + bbox.width / 2,
+    y: bbox.minY + bbox.height / 2,
+  };
+  return strokePointsList.map((pts) => scaleStrokePointsAboutCenter(pts, scaleFactor, center));
+}
+
 
 
 

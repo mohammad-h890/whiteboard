@@ -54,6 +54,8 @@ import {
   computeCustomBoardCursor,
   getStrokesBoundingBox,
   translateStrokePoints,
+  scaleStrokePointsAboutCenter,
+  scaleMultiStrokesAboutCommonCenter,
   Point2D,
 } from '../core/canvasAndMathEngine';
 import { BareBoardShapeGraphic } from './BareBoardShapeGraphic';
@@ -343,6 +345,11 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
   );
   const [handwritingBeautifierActive, setHandwritingBeautifierActive] =
     useState<boolean>(true);
+  const [liveBoardHandwritingStrokes, setLiveBoardHandwritingStrokes] = useState<Point2D[][]>(
+    []
+  );
+  const isOnBoardHandwritingActive =
+    showHandwritingPad && handwritingPadTab === 'handwriting';
 
   // Class Notes PDF Handout Preview & Export Modal State
   const [showClassNotesModal, setShowClassNotesModal] = useState<boolean>(false);
@@ -434,7 +441,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
         break;
       case 'handwriting-pad':
         setHandwritingPadTab('handwriting');
-        setShowHandwritingPad(true);
+        setShowHandwritingPad((v) => !v);
         break;
       case 'flowchart-pad':
         setHandwritingPadTab('flowchart');
@@ -459,6 +466,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
       setShowDynamicTable(false);
       setSelectedWidgetId(null);
       setSelectedStrokeIds([]);
+      setLiveBoardHandwritingStrokes([]);
       setBoardPdfSheet(null);
     }
   }, [clearTrigger, currentPage]);
@@ -622,7 +630,29 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     setShowShapesPalette(false);
   };
 
-  // Global keyboard listener for Custom Board Shortcuts (Alt+1..9 etc.) & Esc from Fullscreen
+  const scaleSelectedStrokesOnBoard = (scaleFactor: number) => {
+    if (selectedStrokeIds.length === 0) return;
+    const selSet = new Set(selectedStrokeIds);
+    setStrokes((prev) => {
+      const targetStrokes = prev.filter((s) => selSet.has(s.id));
+      if (targetStrokes.length === 0) return prev;
+      const scaledPointsList =
+        targetStrokes.length === 1
+          ? [scaleStrokePointsAboutCenter(targetStrokes[0].points, scaleFactor)]
+          : scaleMultiStrokesAboutCommonCenter(
+              targetStrokes.map((s) => s.points),
+              scaleFactor
+            );
+      let idxCounter = 0;
+      return prev.map((s) => {
+        if (!selSet.has(s.id)) return s;
+        const nextPts = scaledPointsList[idxCounter++] ?? s.points;
+        return { ...s, points: nextPts };
+      });
+    });
+  };
+
+  // Global keyboard listener for Shapes/Widgets Delete & Resize, Pen/Eraser Size, Custom Shortcuts & Esc
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isBoardFullscreen) {
@@ -639,6 +669,183 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
           target.isContentEditable)
       ) {
         return;
+      }
+
+      // 1. Delete / Backspace -> Delete selected widget, selected shape/strokes, or live board handwriting strokes
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedWidgetId) {
+          e.preventDefault();
+          const title = selectedWidget?.title ?? 'ابزارک';
+          onRemoveStampedWidget(selectedWidgetId);
+          setSelectedWidgetId(null);
+          setLastSnapNotice(`«${title}» با دکمه کیبورد حذف شد`);
+          window.setTimeout(() => setLastSnapNotice(null), 1800);
+          return;
+        }
+        if (selectedStrokeIds.length > 0) {
+          e.preventDefault();
+          const selSet = new Set(selectedStrokeIds);
+          setStrokes((prev) => prev.filter((s) => !selSet.has(s.id)));
+          setSelectedStrokeIds([]);
+          setLastSnapNotice('شکل ترسیمی انتخاب‌شده با دکمه کیبورد حذف شد');
+          window.setTimeout(() => setLastSnapNotice(null), 1800);
+          return;
+        }
+        if (isOnBoardHandwritingActive && liveBoardHandwritingStrokes.length > 0) {
+          e.preventDefault();
+          setLiveBoardHandwritingStrokes((prev) => prev.slice(0, -1));
+          return;
+        }
+      }
+
+      // 2. Pen Size / Eraser Size Dedicated Keyboard Keys: '[' / 'PageDown' (shrink) and ']' / 'PageUp' (enlarge)
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === ']' || e.key === 'PageUp')) {
+        e.preventDefault();
+        if (isEraserActive && onChangeEraserSize) {
+          const nextSz = Math.min(80, eraserSize + 6);
+          onChangeEraserSize(nextSz);
+          setLastSnapNotice(`اندازه پاک‌کن بزرگ‌تر شد: ${fmt(nextSz)}px`);
+        } else if (onChangeStrokeWidth) {
+          const nextW = Math.min(24, strokeWidth + 2);
+          onChangeStrokeWidth(nextW);
+          setLastSnapNotice(`اندازه قلم بزرگ‌تر شد: ${fmt(nextW)}px`);
+        }
+        window.setTimeout(() => setLastSnapNotice(null), 1600);
+        return;
+      }
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === '[' || e.key === 'PageDown')) {
+        e.preventDefault();
+        if (isEraserActive && onChangeEraserSize) {
+          const nextSz = Math.max(6, eraserSize - 6);
+          onChangeEraserSize(nextSz);
+          setLastSnapNotice(`اندازه پاک‌کن کوچک‌تر شد: ${fmt(nextSz)}px`);
+        } else if (onChangeStrokeWidth) {
+          const nextW = Math.max(2, strokeWidth - 2);
+          onChangeStrokeWidth(nextW);
+          setLastSnapNotice(`اندازه قلم کوچک‌تر شد: ${fmt(nextW)}px`);
+        }
+        window.setTimeout(() => setLastSnapNotice(null), 1600);
+        return;
+      }
+
+      // 3. '+' / '=' or 'ArrowUp' -> Increase dimensions of selected widget or drawn shape, or increase pen/eraser size
+      if (
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        (e.key === '+' || e.key === '=' || e.key === 'ArrowUp')
+      ) {
+        if (selectedWidget) {
+          e.preventDefault();
+          const nextScale = Math.min(
+            3.0,
+            Number(((selectedWidget.scale ?? 1) + 0.15).toFixed(2))
+          );
+          updateWidgetProps(selectedWidget.id, { scale: nextScale });
+          setLastSnapNotice(
+            `ابعاد «${selectedWidget.title}» بزرگ‌تر شد (${fmt(Math.round(nextScale * 100))}٪)`
+          );
+          window.setTimeout(() => setLastSnapNotice(null), 1600);
+          return;
+        }
+        if (selectedStrokeIds.length > 0) {
+          e.preventDefault();
+          scaleSelectedStrokesOnBoard(1.15);
+          setLastSnapNotice('ابعاد شکل ترسیمی بزرگ‌تر شد (+۱۵٪)');
+          window.setTimeout(() => setLastSnapNotice(null), 1600);
+          return;
+        }
+        if (e.key === '+' || e.key === '=') {
+          e.preventDefault();
+          if (isEraserActive && onChangeEraserSize) {
+            const nextSz = Math.min(80, eraserSize + 6);
+            onChangeEraserSize(nextSz);
+            setLastSnapNotice(`اندازه پاک‌کن بزرگ‌تر شد: ${fmt(nextSz)}px`);
+          } else if (onChangeStrokeWidth) {
+            const nextW = Math.min(24, strokeWidth + 2);
+            onChangeStrokeWidth(nextW);
+            setLastSnapNotice(`اندازه قلم بزرگ‌تر شد: ${fmt(nextW)}px`);
+          }
+          window.setTimeout(() => setLastSnapNotice(null), 1600);
+          return;
+        }
+      }
+
+      // 4. '-' / '_' or 'ArrowDown' -> Decrease dimensions of selected widget or drawn shape, or decrease pen/eraser size
+      if (
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        (e.key === '-' || e.key === '_' || e.key === 'ArrowDown')
+      ) {
+        if (selectedWidget) {
+          e.preventDefault();
+          const nextScale = Math.max(
+            0.35,
+            Number(((selectedWidget.scale ?? 1) - 0.15).toFixed(2))
+          );
+          updateWidgetProps(selectedWidget.id, { scale: nextScale });
+          setLastSnapNotice(
+            `ابعاد «${selectedWidget.title}» کوچک‌تر شد (${fmt(Math.round(nextScale * 100))}٪)`
+          );
+          window.setTimeout(() => setLastSnapNotice(null), 1600);
+          return;
+        }
+        if (selectedStrokeIds.length > 0) {
+          e.preventDefault();
+          scaleSelectedStrokesOnBoard(0.87);
+          setLastSnapNotice('ابعاد شکل ترسیمی کوچک‌تر شد (-۱۵٪)');
+          window.setTimeout(() => setLastSnapNotice(null), 1600);
+          return;
+        }
+        if (e.key === '-' || e.key === '_') {
+          e.preventDefault();
+          if (isEraserActive && onChangeEraserSize) {
+            const nextSz = Math.max(6, eraserSize - 6);
+            onChangeEraserSize(nextSz);
+            setLastSnapNotice(`اندازه پاک‌کن کوچک‌تر شد: ${fmt(nextSz)}px`);
+          } else if (onChangeStrokeWidth) {
+            const nextW = Math.max(2, strokeWidth - 2);
+            onChangeStrokeWidth(nextW);
+            setLastSnapNotice(`اندازه قلم کوچک‌تر شد: ${fmt(nextW)}px`);
+          }
+          window.setTimeout(() => setLastSnapNotice(null), 1600);
+          return;
+        }
+      }
+
+      // 5. ArrowLeft / ArrowRight -> Nudge selected widget or selected strokes horizontally
+      if (
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+      ) {
+        const dx = e.key === 'ArrowLeft' ? -14 : 14;
+        if (selectedWidget) {
+          e.preventDefault();
+          const curPos = widgetCoords[selectedWidget.id] ?? {
+            x: selectedWidget.x,
+            y: selectedWidget.y,
+          };
+          const nextX = Math.max(8, curPos.x + dx);
+          setWidgetCoords((prev) => ({
+            ...prev,
+            [selectedWidget.id]: { x: nextX, y: curPos.y },
+          }));
+          updateWidgetProps(selectedWidget.id, { x: nextX });
+          return;
+        }
+        if (selectedStrokeIds.length > 0) {
+          e.preventDefault();
+          const selSet = new Set(selectedStrokeIds);
+          setStrokes((prev) =>
+            prev.map((s) =>
+              selSet.has(s.id) ? { ...s, points: translateStrokePoints(s.points, dx, 0) } : s
+            )
+          );
+          return;
+        }
       }
 
       const combo = formatKeyboardEventToCombo({
@@ -851,6 +1058,51 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     highlighterStrokes.forEach((s) => drawPathOnCtx(ctx, s));
     regularStrokes.forEach((s) => drawPathOnCtx(ctx, s));
 
+    // Render live on-board handwriting strokes (when Offline Handwriting Mode is ON)
+    if (liveBoardHandwritingStrokes.length > 0) {
+      const hwBox = getStrokesBoundingBox(liveBoardHandwritingStrokes);
+      if (hwBox) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(2, 132, 199, 0.45)';
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.05)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.roundRect(
+          hwBox.minX - 18,
+          hwBox.minY - 18,
+          Math.max(36, hwBox.width + 36),
+          Math.max(36, hwBox.height + 36),
+          12
+        );
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      liveBoardHandwritingStrokes.forEach((hwPts, idx) => {
+        if (hwPts.length === 0) return;
+        if (hwPts.length === 1) {
+          ctx.save();
+          ctx.fillStyle = '#0284c7';
+          ctx.beginPath();
+          ctx.arc(hwPts[0].x, hwPts[0].y, Math.max(4, strokeWidth * 1.1), 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+          return;
+        }
+        drawPathOnCtx(ctx, {
+          id: `hw-board-${idx}`,
+          pageIndex: currentPage,
+          layerId: activeLayerId,
+          tool: 'fountain',
+          color: '#0284c7',
+          width: Math.max(4, strokeWidth),
+          points: hwPts,
+        });
+      });
+    }
+
     // Render active in-progress stroke
     if (isDrawingRef.current && currentPointsRef.current.length >= 2 && !isEraserActive) {
       const livePts =
@@ -866,12 +1118,13 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
         pageIndex: currentPage,
         layerId: activeLayerId,
         tool: activeTool,
-        color:
-          activeTool === 'laser-vanish'
-            ? '#ef4444'
-            : activeTool === 'lasso'
-            ? '#0284c7'
-            : strokeColor,
+        color: isOnBoardHandwritingActive
+          ? '#0284c7'
+          : activeTool === 'laser-vanish'
+          ? '#ef4444'
+          : activeTool === 'lasso'
+          ? '#0284c7'
+          : strokeColor,
         width: strokeWidth,
         points: livePts,
         isVanishing: activeTool === 'laser-vanish',
@@ -889,6 +1142,8 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     activeLayerId,
     strokeColor,
     strokeWidth,
+    liveBoardHandwritingStrokes,
+    isOnBoardHandwritingActive,
   ]);
 
   useEffect(() => {
@@ -1415,10 +1670,32 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
         isDrawingRef.current = false;
         currentPointsRef.current = [];
         setSelectedWidgetId(downInfo.hitWidgetId);
+        setSelectedStrokeIds([]);
         redrawCanvas();
         return;
-      } else if (selectedWidgetId && !isEraserActive) {
-        setSelectedWidgetId(null);
+      } else if (!isOnBoardHandwritingActive && !isEraserActive) {
+        if (selectedWidgetId) {
+          setSelectedWidgetId(null);
+        }
+        // Check if user clicked on an existing drawn shape/stroke on the board to select it for keyboard resize/delete!
+        const tapPt = currentPointsRef.current[0];
+        if (tapPt) {
+          let hitStrokeId: string | null = null;
+          for (let i = pageStrokes.length - 1; i >= 0; i--) {
+            const s = pageStrokes[i];
+            if (isStrokeHitByEraser(s.points, tapPt, 18 + s.width)) {
+              hitStrokeId = s.id;
+              break;
+            }
+          }
+          if (hitStrokeId) {
+            isDrawingRef.current = false;
+            currentPointsRef.current = [];
+            setSelectedStrokeIds([hitStrokeId]);
+            redrawCanvas();
+            return;
+          }
+        }
       }
     }
 
@@ -1430,6 +1707,15 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     }
     let pts = [...currentPointsRef.current];
     currentPointsRef.current = [];
+
+    // When On-Board Offline Handwriting Mode is ON, capture strokes (including single-point dots!) for live corner box recognition
+    if (isOnBoardHandwritingActive && activeTool !== 'lasso' && activeTool !== 'fill-bucket') {
+      if (pts.length >= 1) {
+        setLiveBoardHandwritingStrokes((prev) => [...prev, pts]);
+      }
+      redrawCanvas();
+      return;
+    }
 
     if (pts.length < 2) {
       redrawCanvas();
@@ -1451,7 +1737,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
       setSelectedStrokeIds(matchedIds);
       if (matchedIds.length > 0) {
         setLastSnapNotice(
-          `${fmt(matchedIds.length)} خط با کمند انتخاب شد — کادر انتخابی را با ماوس بکشید و جابه‌جا کنید`
+          `${fmt(matchedIds.length)} خط با کمند انتخاب شد — با کلیدهای + و - یا Delete کیبورد تغییر اندازه یا حذف کنید`
         );
         window.setTimeout(() => setLastSnapNotice(null), 2600);
       } else {
@@ -1467,7 +1753,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
           const hitW = findHitWidgetAtRelCoords(midX, midY);
           if (hitW) {
             setSelectedWidgetId(hitW.id);
-            setLastSnapNotice(`«${hitW.title}» با کمند انتخاب شد — با ماوس جابه‌جا کنید`);
+            setLastSnapNotice(`«${hitW.title}» با کمند انتخاب شد — با ماوس یا کیبورد تغییر دهید`);
             window.setTimeout(() => setLastSnapNotice(null), 2400);
           }
         }
@@ -1497,8 +1783,10 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
         if (recognized.type !== 'freehand') {
           pts = recognized.snappedPoints;
           recognizedLabel = recognized.labelFa;
-          setLastSnapNotice(`تشخیص هوشمند: ${recognized.labelFa}`);
-          window.setTimeout(() => setLastSnapNotice(null), 2000);
+          setLastSnapNotice(
+            `تشخیص هوشمند: ${recognized.labelFa} (با کلیدهای + و - یا Delete کیبورد تنظیم کنید)`
+          );
+          window.setTimeout(() => setLastSnapNotice(null), 2400);
         }
       }
     }
@@ -1527,6 +1815,11 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     };
     setStrokes((prev) => [...prev, newStroke]);
     setRedoStack([]);
+    // Auto-select newly snapped geometric shape so keyboard keys (+, -, Delete, Arrows) act on it immediately!
+    if (recognizedLabel) {
+      setSelectedStrokeIds([newStroke.id]);
+      setSelectedWidgetId(null);
+    }
   };
 
   const getBackgroundStyle = (): React.CSSProperties => {
@@ -2002,7 +2295,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
               <span>اشکال آماده و علائم ریاضی</span>
             </button>
 
-            {/* Offline Gboard-Style Handwriting Pad Trigger (پد دست‌نویسی آفلاین گوگل) */}
+            {/* Offline Gboard-Style On-Board Handwriting Toggle Button (دکمه روشن و خاموش شدن دست‌نویس آفلاین روی تخته) */}
             <button
               type="button"
               data-testid="toggle-handwriting-pad-btn"
@@ -2012,13 +2305,17 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
               }}
               className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors ${
                 showHandwritingPad
-                  ? 'bg-sky-600 text-white shadow-2xs'
+                  ? 'bg-emerald-600 text-white shadow-2xs ring-2 ring-emerald-400/50'
                   : 'bg-sky-500/15 text-sky-800 dark:text-sky-300 border border-sky-500/35 hover:bg-sky-500/25'
               }`}
-              title="تشخیص آفلاین دست‌نویس اعداد و حروف فارسی و انگلیسی به سبک کیبورد گوگل"
+              title="روشن/خاموش کردن حالت نوشتن دست‌نویس آفلاین مستقیم روی وایت‌برد همراه با کادر گوشه صفحه"
             >
               <Languages className="w-3.5 h-3.5" />
-              <span>✍️ دست‌نویس آفلاین (گوگل)</span>
+              <span>
+                {showHandwritingPad
+                  ? '✍️ دست‌نویس آفلاین: روشن ✓'
+                  : '✍️ دست‌نویس آفلاین: خاموش'}
+              </span>
             </button>
 
             {/* Desktop Overlay Mode Toggle (حالت نوشتن روی دسکتاپ) */}
@@ -2625,6 +2922,24 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                 </span>
                 <button
                   type="button"
+                  data-testid="scale-up-selected-strokes-btn"
+                  onClick={() => scaleSelectedStrokesOnBoard(1.15)}
+                  title="بزرگ‌تر کردن شکل (کلید + یا ArrowUp)"
+                  className="px-1.5 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500"
+                >
+                  + بزرگ‌تر
+                </button>
+                <button
+                  type="button"
+                  data-testid="scale-down-selected-strokes-btn"
+                  onClick={() => scaleSelectedStrokesOnBoard(0.87)}
+                  title="کوچک‌تر کردن شکل (کلید - یا ArrowDown)"
+                  className="px-1.5 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500"
+                >
+                  - کوچک‌تر
+                </button>
+                <button
+                  type="button"
                   onClick={() => {
                     const selSet = new Set(selectedStrokeIds);
                     setStrokes((prev) =>
@@ -2658,6 +2973,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                 </button>
                 <button
                   type="button"
+                  data-testid="delete-selected-strokes-btn"
                   onClick={() => {
                     const selSet = new Set(selectedStrokeIds);
                     setStrokes((prev) => prev.filter((s) => !selSet.has(s.id)));
@@ -2665,7 +2981,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                   }}
                   className="px-1.5 py-0.5 rounded bg-rose-600 hover:bg-rose-500"
                 >
-                  حذف
+                  حذف (Del)
                 </button>
                 <button
                   type="button"
@@ -2706,7 +3022,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                 </button>
               ))}
 
-              {/* Right next to Shape Recognition: Offline Gboard Handwriting Pad Toggle */}
+              {/* Right next to Shape Recognition: Offline Gboard Handwriting On/Off Toggle */}
               <button
                 type="button"
                 data-testid="open-handwriting-next-to-shape-btn"
@@ -2714,32 +3030,69 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                   setHandwritingPadTab('handwriting');
                   setShowHandwritingPad((v) => !v);
                 }}
-                className="px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-bold flex items-center gap-1 shadow-xs"
+                className={`px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 shadow-xs transition-colors ${
+                  showHandwritingPad
+                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                    : 'bg-sky-600 hover:bg-sky-500 text-white'
+                }`}
               >
                 <Languages className="w-3.5 h-3.5" />
-                <span>✍️ دست‌نویسی آفلاین (کیبورد گوگل)</span>
+                <span>
+                  {showHandwritingPad
+                    ? '✍️ دست‌نویسی آفلاین: روشن ✓'
+                    : '✍️ دست‌نویسی آفلاین: خاموش'}
+                </span>
               </button>
             </div>
           )}
 
-          {/* Offline Gboard-Style Handwriting & Flowchart Pad Floating Panel */}
+          {/* Offline Gboard-Style Handwriting Corner Box (کادر گوشه صفحه برای نمایش، ویرایش و وارد کردن دست‌نویس روی تخته) */}
           {showHandwritingPad && (
-            <div className="sticky top-14 left-3 ml-3 mt-2 z-40 w-fit">
+            <div className="fixed bottom-3 left-3 z-40 w-fit max-w-[95vw]">
               <OfflineHandwritingPad
                 isOpen={showHandwritingPad}
-                onClose={() => setShowHandwritingPad(false)}
+                onClose={() => {
+                  setShowHandwritingPad(false);
+                  setLiveBoardHandwritingStrokes([]);
+                }}
                 strokeColor={strokeColor}
                 usePersianNumerals={usePersianNumerals}
                 initialTab={handwritingPadTab}
                 beautifierActive={handwritingBeautifierActive}
                 onToggleBeautifier={() => setHandwritingBeautifierActive((b) => !b)}
+                boardStrokes={liveBoardHandwritingStrokes}
+                onClearBoardStrokes={() => setLiveBoardHandwritingStrokes([])}
+                onUndoLastBoardStroke={() =>
+                  setLiveBoardHandwritingStrokes((prev) => prev.slice(0, -1))
+                }
                 onStampRecognizedText={(txt, kind) => {
-                  if (kind === 'math-symbol') {
-                    addMathSymbolToBoard(txt, txt);
-                  } else {
-                    addPersianNumberToBoard(txt);
+                  let targetX: number | undefined;
+                  let targetY: number | undefined;
+                  if (liveBoardHandwritingStrokes.length > 0) {
+                    const hwBox = getStrokesBoundingBox(liveBoardHandwritingStrokes);
+                    const container = boardContainerRef.current;
+                    const canvas = canvasRef.current;
+                    if (hwBox && container && canvas) {
+                      const rect = container.getBoundingClientRect();
+                      const scaleX = rect.width / Math.max(1, canvas.width);
+                      const scaleY = rect.height / Math.max(1, canvas.height);
+                      targetX = Math.max(
+                        40,
+                        Math.min(rect.width - 160, ((hwBox.minX + hwBox.maxX) / 2) * scaleX - 40)
+                      );
+                      targetY = Math.max(
+                        60,
+                        Math.min(rect.height - 120, ((hwBox.minY + hwBox.maxY) / 2) * scaleY - 30)
+                      );
+                    }
                   }
-                  setLastSnapNotice(`دست‌نویس «${txt}» با دقت بالا تشخیص داده شد و روی تخته قرار گرفت`);
+                  if (kind === 'math-symbol') {
+                    addMathSymbolToBoard(txt, txt, targetX, targetY);
+                  } else {
+                    addPersianNumberToBoard(txt, targetX, targetY);
+                  }
+                  setLiveBoardHandwritingStrokes([]);
+                  setLastSnapNotice(`متن «${txt}» روی صفحه وایت‌برد وارد شد`);
                   window.setTimeout(() => setLastSnapNotice(null), 2400);
                 }}
                 onStampBeautifiedStrokes={(hwStrokes) => {
@@ -2750,11 +3103,15 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                     tool: 'fountain',
                     color: strokeColor,
                     width: strokeWidth,
-                    points: st.map((p) => ({ x: p.x + 220, y: p.y + 180 })),
+                    points:
+                      liveBoardHandwritingStrokes.length > 0
+                        ? st
+                        : st.map((p) => ({ x: p.x + 220, y: p.y + 180 })),
                     createdAt: Date.now(),
                   }));
                   setStrokes((prev) => [...prev, ...newPaths]);
-                  setLastSnapNotice('دستخط صاف‌شده به بوم تخته منتقل شد');
+                  setLiveBoardHandwritingStrokes([]);
+                  setLastSnapNotice('دستخط صاف‌شده روی صفحه وایت‌برد قرار گرفت');
                   window.setTimeout(() => setLastSnapNotice(null), 2200);
                 }}
                 onStampFlowchart={(title, steps) => {
@@ -3396,8 +3753,16 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
           {selectedWidget && (
             <div
               data-testid="selected-shape-inspector"
-              className="fixed bottom-3 left-3 w-80 p-3 rounded-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-2 border-sky-500 shadow-2xl z-40 space-y-2.5 text-xs"
+              className={`fixed bottom-3 ${
+                showHandwritingPad ? 'right-3' : 'left-3'
+              } w-80 p-3 rounded-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-2 border-sky-500 shadow-2xl z-40 space-y-2.5 text-xs`}
             >
+              <div className="flex items-center justify-between px-2 py-1 rounded-lg bg-sky-500/10 border border-sky-500/20 text-[10px] text-sky-700 dark:text-sky-300 font-semibold">
+                <span>کیبورد:</span>
+                <span dir="ltr" className="font-mono font-bold">
+                  [+] / [-] ابعاد · [Del] حذف · [←/→] حرکت
+                </span>
+              </div>
               {/* Header: Shape Name + Move/Draw Toggle + Copy + Delete + Close */}
               <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-1.5">
                 <span className="font-extrabold text-sky-600 dark:text-sky-400 truncate max-w-[140px]">

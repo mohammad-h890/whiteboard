@@ -25,6 +25,8 @@ import {
   computeCustomBoardCursor,
   getStrokesBoundingBox,
   translateStrokePoints,
+  scaleStrokePointsAboutCenter,
+  scaleMultiStrokesAboutCommonCenter,
   FREQUENT_MATH_SYMBOLS,
   INITIAL_CUSTOM_BOARD_SHORTCUTS,
   upsertCustomBoardShortcut,
@@ -51,7 +53,7 @@ function samplePolygonEdges(vertices: Point2D[], samplesPerEdge = 8): Point2D[] 
   return pts;
 }
 
-test('recognizeGeometricShape detects line, circle, ellipse, triangle, rectangle, rhombus, pentagon, hexagon, and octagon accurately', () => {
+test('recognizeGeometricShape detects line, circle, ellipse, triangle, rectangle, rhombus, pentagon, hexagon, and octagon accurately and regularizes crooked polygons', () => {
   const linePts: Point2D[] = [
     { x: 10, y: 10 },
     { x: 50, y: 11 },
@@ -119,27 +121,48 @@ test('recognizeGeometricShape detects line, circle, ellipse, triangle, rectangle
   assert.equal(rhombusRes.type, 'rhombus');
   assert.equal(rhombusRes.snappedPoints.length, 5);
 
-  // Hand-drawn Pentagon (5 sides)
-  const pentagonVertices: Point2D[] = [];
-  for (let i = 0; i < 5; i++) {
-    const a = -Math.PI / 2 + (i * 2 * Math.PI) / 5;
-    pentagonVertices.push({ x: 120 + 70 * Math.cos(a), y: 120 + 70 * Math.sin(a) });
-  }
-  const pentagonPts = samplePolygonEdges(pentagonVertices, 10);
+  // Crooked / asymmetric hand-drawn Pentagon (5 unequal sides) -> must snap to a 100% REGULAR pentagon!
+  const crookedPentagonVertices: Point2D[] = [
+    { x: 115, y: 48 },
+    { x: 192, y: 98 },
+    { x: 160, y: 182 },
+    { x: 75, y: 176 },
+    { x: 48, y: 92 },
+  ];
+  const pentagonPts = samplePolygonEdges(crookedPentagonVertices, 10);
   const pentagonRes = recognizeGeometricShape(pentagonPts, true);
   assert.equal(pentagonRes.type, 'pentagon');
   assert.equal(pentagonRes.snappedPoints.length, 6);
-
-  // Hand-drawn Hexagon (6 sides)
-  const hexagonVertices: Point2D[] = [];
-  for (let i = 0; i < 6; i++) {
-    const a = -Math.PI / 2 + (i * 2 * Math.PI) / 6;
-    hexagonVertices.push({ x: 120 + 70 * Math.cos(a), y: 120 + 70 * Math.sin(a) });
+  // Verify all 5 side lengths of the snapped pentagon are equal (regular polygon)
+  const pentSides: number[] = [];
+  for (let i = 0; i < 5; i++) {
+    const p1 = pentagonRes.snappedPoints[i];
+    const p2 = pentagonRes.snappedPoints[i + 1];
+    pentSides.push(Math.hypot(p2.x - p1.x, p2.y - p1.y));
   }
-  const hexagonPts = samplePolygonEdges(hexagonVertices, 10);
+  assert.ok(Math.max(...pentSides) - Math.min(...pentSides) < 0.5);
+
+  // Crooked / asymmetric hand-drawn Hexagon (6 unequal sides) -> must snap to a 100% REGULAR hexagon!
+  const crookedHexagonVertices: Point2D[] = [
+    { x: 122, y: 45 },
+    { x: 188, y: 82 },
+    { x: 182, y: 158 },
+    { x: 118, y: 192 },
+    { x: 54, y: 154 },
+    { x: 58, y: 86 },
+  ];
+  const hexagonPts = samplePolygonEdges(crookedHexagonVertices, 10);
   const hexagonRes = recognizeGeometricShape(hexagonPts, true);
   assert.equal(hexagonRes.type, 'hexagon');
   assert.equal(hexagonRes.snappedPoints.length, 7);
+  // Verify all 6 side lengths of the snapped hexagon are equal (regular polygon)
+  const hexSides: number[] = [];
+  for (let i = 0; i < 6; i++) {
+    const p1 = hexagonRes.snappedPoints[i];
+    const p2 = hexagonRes.snappedPoints[i + 1];
+    hexSides.push(Math.hypot(p2.x - p1.x, p2.y - p1.y));
+  }
+  assert.ok(Math.max(...hexSides) - Math.min(...hexSides) < 0.5);
 
   // Hand-drawn Octagon (8 sides)
   const octagonVertices: Point2D[] = [];
@@ -151,6 +174,20 @@ test('recognizeGeometricShape detects line, circle, ellipse, triangle, rectangle
   const octagonRes = recognizeGeometricShape(octagonPts, true);
   assert.equal(octagonRes.type, 'octagon');
   assert.equal(octagonRes.snappedPoints.length, 9);
+
+  // Verify scaleStrokePointsAboutCenter and scaleMultiStrokesAboutCommonCenter
+  const scaledPent = scaleStrokePointsAboutCenter(pentagonRes.snappedPoints, 1.2);
+  const origSide = Math.hypot(
+    pentagonRes.snappedPoints[1].x - pentagonRes.snappedPoints[0].x,
+    pentagonRes.snappedPoints[1].y - pentagonRes.snappedPoints[0].y
+  );
+  const newSide = Math.hypot(
+    scaledPent[1].x - scaledPent[0].x,
+    scaledPent[1].y - scaledPent[0].y
+  );
+  assert.ok(newSide > origSide * 1.15);
+  const multiScaled = scaleMultiStrokesAboutCommonCenter([pentagonRes.snappedPoints], 0.8);
+  assert.equal(multiScaled.length, 1);
 });
 
 test('eraseStrokePointsInRadius and isStrokeHitByEraser work on both multi-point and 2-point segments and preserve shape corners', () => {

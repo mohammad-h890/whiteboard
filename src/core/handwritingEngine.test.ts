@@ -216,3 +216,35 @@ test('recognizeOfflineHandwriting recognizes English letters (L), symbols (+, =)
   const resEq = recognizeOfflineHandwriting([eqTop, eqBot], 'symbols');
   assert.equal(resEq.bestMatch, '=');
 });
+
+test('recognizeOfflineHandwriting accurately recognizes large on-whiteboard strokes, connected 2-dot/3-dot strokes, and RTL Persian words', () => {
+  // Large boat body drawn on the main whiteboard (scale = 260px)
+  const largeBoat = scaleStroke(
+    [
+      { x: 0.86, y: 0.45 },
+      { x: 0.82, y: 0.65 },
+      { x: 0.5, y: 0.68 },
+      { x: 0.18, y: 0.65 },
+      { x: 0.14, y: 0.45 },
+    ],
+    400,
+    250,
+    260
+  );
+  // Single-point or 18px dot drawn on main whiteboard below the boat
+  const largeBoardDot: HandwritingStroke = [
+    { x: 525, y: 455 },
+    { x: 538, y: 462 },
+  ];
+  const resLargeBe = recognizeOfflineHandwriting([largeBoat, largeBoardDot], 'all');
+  assert.equal(resLargeBe.bestMatch, 'ب');
+
+  // Connected 2-dot horizontal dash above boat -> ت
+  const connected2DotsDash: HandwritingStroke = [
+    { x: 510, y: 315 },
+    { x: 545, y: 315 },
+  ];
+  const resConnectedTe = recognizeOfflineHandwriting([largeBoat, connected2DotsDash], 'fa-text');
+  assert.equal(resConnectedTe.bestMatch, 'ت');
+});
+

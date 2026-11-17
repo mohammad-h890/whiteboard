@@ -1572,6 +1572,59 @@ const HANDWRITING_PROTOTYPES: PrototypeSpec[] = [
     bars: 0,
     aspectRange: [0.45, 1.6],
   },
+  // Cursive Persian letter & word variants (تحریری)
+  {
+    char: 'س',
+    labelFa: 'حرف س (تحریری)',
+    category: 'fa-letter',
+    basePath: pts([
+      [88, 44],
+      [56, 48],
+      [52, 82],
+      [26, 86],
+      [14, 58],
+    ]),
+    dots: 0,
+    dotPos: 'none',
+    bars: 0,
+    aspectRange: [0.9, 3.2],
+  },
+  {
+    char: 'ش',
+    labelFa: 'حرف ش (تحریری)',
+    category: 'fa-letter',
+    basePath: pts([
+      [88, 44],
+      [56, 48],
+      [52, 82],
+      [26, 86],
+      [14, 58],
+    ]),
+    dots: 3,
+    dotPos: 'above',
+    bars: 0,
+    aspectRange: [0.9, 3.2],
+  },
+  {
+    char: 'سلام',
+    labelFa: 'کلمه دست‌نویس «سلام»',
+    category: 'fa-letter',
+    basePath: pts([
+      [90, 62],
+      [76, 62],
+      [62, 62],
+      [55, 18],
+      [50, 65],
+      [34, 22],
+      [26, 45],
+      [16, 45],
+      [16, 88],
+    ]),
+    dots: 0,
+    dotPos: 'none',
+    bars: 0,
+    aspectRange: [1.1, 4.2],
+  },
 ];
 
 /**
@@ -1734,19 +1787,67 @@ function normalizePointsToBox100(points: Point2D[]): {
   return { normalized, width, height, aspect, pathLen, isClosed };
 }
 
+function computeBandedDTW(a: Point2D[], b: Point2D[], band = 6): number {
+  const n = a.length;
+  const m = b.length;
+  if (n === 0 || m === 0) return 100;
+  const dp: number[][] = Array.from({ length: n }, () => Array(m).fill(Infinity));
+  dp[0][0] = Math.hypot(a[0].x - b[0].x, a[0].y - b[0].y);
+
+  for (let i = 0; i < n; i++) {
+    const jMin = Math.max(0, i - band);
+    const jMax = Math.min(m - 1, i + band);
+    for (let j = jMin; j <= jMax; j++) {
+      if (i === 0 && j === 0) continue;
+      const cost = Math.hypot(a[i].x - b[j].x, a[i].y - b[j].y);
+      let prevMin = Infinity;
+      if (i > 0) prevMin = Math.min(prevMin, dp[i - 1][j]);
+      if (j > 0) prevMin = Math.min(prevMin, dp[i][j - 1]);
+      if (i > 0 && j > 0) prevMin = Math.min(prevMin, dp[i - 1][j - 1]);
+      dp[i][j] = cost + prevMin;
+    }
+  }
+  return dp[n - 1][m - 1] / Math.max(n, m);
+}
+
+function computeTangentDirectionPenalty(a: Point2D[], b: Point2D[]): number {
+  const n = Math.min(a.length, b.length);
+  if (n < 4) return 0;
+  let angleDiffSum = 0;
+  let count = 0;
+  for (let i = 2; i < n; i += 2) {
+    const adx = a[i].x - a[i - 2].x;
+    const ady = a[i].y - a[i - 2].y;
+    const bdx = b[i].x - b[i - 2].x;
+    const bdy = b[i].y - b[i - 2].y;
+    const alen = Math.hypot(adx, ady);
+    const blen = Math.hypot(bdx, bdy);
+    if (alen > 0.5 && blen > 0.5) {
+      const cosSim = (adx * bdx + ady * bdy) / (alen * blen);
+      // cosSim in [-1..1]; convert to [0..18] distance penalty
+      angleDiffSum += (1 - Math.max(-1, Math.min(1, cosSim))) * 7.5;
+      count++;
+    }
+  }
+  return count > 0 ? angleDiffSum / count : 0;
+}
+
 function computePathSimilarityDistance(a: Point2D[], b: Point2D[]): number {
   const n = Math.min(a.length, b.length);
   if (n === 0) return 100;
 
-  let forwardSum = 0;
-  let reverseSum = 0;
-  for (let i = 0; i < n; i++) {
-    forwardSum += Math.hypot(a[i].x - b[i].x, a[i].y - b[i].y);
-    reverseSum += Math.hypot(a[i].x - b[n - 1 - i].x, a[i].y - b[n - 1 - i].y);
-  }
-  const orderedDist = Math.min(forwardSum / n, (reverseSum / n) * 1.08);
+  // 1. Elastic Banded DTW distance (forward and reversed for stroke-order resilience)
+  const bReversed = [...b].reverse();
+  const dtwForward = computeBandedDTW(a, b, 6);
+  const dtwReverse = computeBandedDTW(a, bReversed, 6) * 1.12;
+  const dtwDist = Math.min(dtwForward, dtwReverse);
 
-  // Also compute Chamfer point-cloud distance for stroke-order invariance
+  // 2. Tangent direction similarity (forward vs reversed)
+  const tanForward = computeTangentDirectionPenalty(a, b);
+  const tanReverse = computeTangentDirectionPenalty(a, bReversed) * 1.15;
+  const tanPenalty = dtwForward <= dtwReverse ? tanForward : tanReverse;
+
+  // 3. Chamfer point-cloud distance for spatial shape overlap
   let cloudSum = 0;
   for (let i = 0; i < n; i++) {
     let minD = Infinity;
@@ -1758,7 +1859,7 @@ function computePathSimilarityDistance(a: Point2D[], b: Point2D[]): number {
   }
   const cloudDist = cloudSum / n;
 
-  return orderedDist * 0.65 + cloudDist * 0.35;
+  return dtwDist * 0.55 + cloudDist * 0.3 + tanPenalty * 0.35;
 }
 
 const NORMALIZED_PROTOTYPES = HANDWRITING_PROTOTYPES.map((proto) => ({
@@ -1778,10 +1879,11 @@ interface StrokeStats {
   height: number;
   diag: number;
   pathLen: number;
+  directDist: number;
   isDot: boolean;
 }
 
-function analyzeStroke(points: Point2D[]): StrokeStats {
+function analyzeStroke(points: Point2D[], referenceScaleDiag = 100): StrokeStats {
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -1800,7 +1902,17 @@ function analyzeStroke(points: Point2D[]): StrokeStats {
   const width = Math.max(1, maxX - minX);
   const height = Math.max(1, maxY - minY);
   const diag = Math.hypot(width, height);
-  const isDot = points.length <= 6 && diag < 18 && pathLen < 26;
+  const first = points[0] ?? { x: 0, y: 0 };
+  const last = points[points.length - 1] ?? first;
+  const directDist = Math.hypot(last.x - first.x, last.y - first.y);
+
+  // Scale-invariant dot detection: works whether drawn on a 120px mini-pad or a 1400px whiteboard!
+  // Horizontal dashes (width >= 20 && width > height * 2.5) are 2-dot dashes (ت، ق، ی), not single dots.
+  const dotMaxDiag = Math.max(22, referenceScaleDiag * 0.24);
+  const dotMaxPath = Math.max(34, referenceScaleDiag * 0.36);
+  const isHorizontalDash = width >= 20 && width > height * 2.5;
+  const isDot = diag <= dotMaxDiag && pathLen <= dotMaxPath && !isHorizontalDash;
+
   return {
     points,
     minX,
@@ -1813,20 +1925,26 @@ function analyzeStroke(points: Point2D[]): StrokeStats {
     height,
     diag,
     pathLen,
+    directDist,
     isDot,
   };
 }
 
 /**
- * Groups multiple strokes drawn on the handwriting pad into spatially separated character clusters,
- * keeping dots and crossbars attached to their parent character body.
+ * Groups multiple strokes drawn on the whiteboard or pad into spatially separated character clusters,
+ * keeping dots, connected 2-dot dashes, 3-dot carets (^), and crossbars attached to their parent body.
  */
 function clusterHandwritingStrokes(
   rawStrokes: Point2D[][],
   mode: HandwritingRecognitionMode
 ): StrokeStats[][] {
-  const valid = rawStrokes.filter((s) => s.length > 0).map(analyzeStroke);
-  if (valid.length === 0) return [];
+  const nonEmpty = rawStrokes.filter((s) => s.length > 0);
+  if (nonEmpty.length === 0) return [];
+
+  // First pass to find reference character scale on the board
+  const prelim = nonEmpty.map((s) => analyzeStroke(s, 100));
+  const maxRefDiag = Math.max(60, ...prelim.map((s) => s.diag));
+  const valid = nonEmpty.map((s) => analyzeStroke(s, maxRefDiag));
   if (valid.length === 1) return [[valid[0]]];
 
   const nonDots = valid.filter((s) => !s.isDot);
@@ -1845,11 +1963,16 @@ function clusterHandwritingStrokes(
     const prevCluster = clusters[clusters.length - 1];
     const clusterMinX = Math.min(...prevCluster.map((s) => s.minX));
     const clusterMaxX = Math.max(...prevCluster.map((s) => s.maxX));
-    const clusterWidth = Math.max(20, clusterMaxX - clusterMinX);
+    const clusterWidth = Math.max(24, clusterMaxX - clusterMinX);
 
     // Check horizontal overlap between `curr` and `prevCluster`
     const overlapX = Math.min(curr.maxX, clusterMaxX) - Math.max(curr.minX, clusterMinX);
-    if (overlapX > -Math.min(14, clusterWidth * 0.18)) {
+    const minStrokeWidth = Math.max(12, Math.min(curr.width, clusterWidth));
+    const clusterCx = (clusterMinX + clusterMaxX) / 2;
+    const isVerticallyStackedAux =
+      Math.abs(curr.cx - clusterCx) <= Math.max(curr.width, clusterWidth, 24) * 0.48 &&
+      overlapX >= -4;
+    if (overlapX >= minStrokeWidth * 0.18 || isVerticallyStackedAux) {
       prevCluster.push(curr);
     } else {
       clusters.push([curr]);
@@ -1861,8 +1984,13 @@ function clusterHandwritingStrokes(
     let bestCluster = clusters[0];
     let bestDist = Infinity;
     for (const c of clusters) {
-      const cCx = c.reduce((sum, s) => sum + s.cx, 0) / c.length;
-      const dist = Math.abs(d.cx - cCx);
+      const cMinX = Math.min(...c.map((s) => s.minX));
+      const cMaxX = Math.max(...c.map((s) => s.maxX));
+      const cCx = (cMinX + cMaxX) / 2;
+      const dist =
+        d.cx >= cMinX && d.cx <= cMaxX
+          ? Math.abs(d.cx - cCx) * 0.35
+          : Math.min(Math.abs(d.cx - cMinX), Math.abs(d.cx - cMaxX));
       if (dist < bestDist) {
         bestDist = dist;
         bestCluster = c;
@@ -1871,35 +1999,26 @@ function clusterHandwritingStrokes(
     bestCluster.push(d);
   }
 
-  // For Persian text mode (`fa-text`), characters are written RTL (right to left);
-  // for numbers (even Persian digits!) and English text, people write digits left-to-right (e.g. ۱ then ۲ then ۵).
-  if (mode === 'fa-text') {
-    clusters.sort((a, b) => {
-      const ax = a.reduce((s, i) => s + i.cx, 0) / a.length;
-      const bx = b.reduce((s, i) => s + i.cx, 0) / b.length;
-      return bx - ax;
-    });
-  } else {
-    clusters.sort((a, b) => {
-      const ax = a.reduce((s, i) => s + i.cx, 0) / a.length;
-      const bx = b.reduce((s, i) => s + i.cx, 0) / b.length;
-      return ax - bx;
-    });
-  }
+  // Default sort left-to-right; RTL vs LTR will be finalized contextually in recognizeOfflineHandwriting
+  clusters.sort((a, b) => {
+    const ax = a.reduce((s, i) => s + i.cx, 0) / a.length;
+    const bx = b.reduce((s, i) => s + i.cx, 0) / b.length;
+    return mode === 'fa-text' ? bx - ax : ax - bx;
+  });
 
   return clusters;
 }
 
 /**
- * Recognizes a single character cluster (main body stroke + optional dots/bars)
+ * Recognizes a single character cluster (main body stroke + optional dots/dashes/carets/bars)
  * and returns a ranked list of candidates.
  */
 function recognizeSingleCluster(
   cluster: StrokeStats[],
   mode: HandwritingRecognitionMode
 ): HandwritingCandidate[] {
-  // Separate dots vs non-dot strokes
-  const dotStrokes = cluster.filter((s) => s.isDot);
+  // Separate explicit dots vs non-dot strokes
+  const explicitDots = cluster.filter((s) => s.isDot);
   const bodyStrokes = cluster.filter((s) => !s.isDot);
 
   // If all strokes are dots, e.g. period '.' or zero '۰'
@@ -1910,45 +2029,86 @@ function recognizeSingleCluster(
     ];
   }
 
-  // Pick the primary (longest path) stroke as the main body, and count auxiliary bars
+  // Pick the primary (longest path) stroke as the main body
   const sortedByLen = [...bodyStrokes].sort((a, b) => b.pathLen - a.pathLen);
   const mainBody = sortedByLen[0];
   const auxStrokes = sortedByLen.slice(1);
 
-  // Check if auxStrokes are crossbars/slashes (like آ, ک, گ, +, =, ×, t)
   let barCount = 0;
+  let inferredExtraDots = 0;
+  const virtualDotCentersY: number[] = explicitDots.map((d) => d.cy);
   const combinedBodyPoints: Point2D[] = [...mainBody.points];
-  for (const aux of auxStrokes) {
-    if (aux.pathLen <= mainBody.pathLen * 1.15 && aux.points.length <= 40) {
-      barCount++;
-    } else {
-      combinedBodyPoints.push(...aux.points);
-    }
-  }
 
-  // Geometric disambiguation for 2-stroke '+' vs '='
-  const isPlusLike =
+  // Geometric disambiguation for 2-stroke '+' vs '=' (both strokes must be straight lines of comparable size)
+  const bothStraightAndComparable =
     bodyStrokes.length === 2 &&
-    dotStrokes.length === 0 &&
+    explicitDots.length === 0 &&
+    bodyStrokes[0].pathLen <= bodyStrokes[0].directDist * 1.12 &&
+    bodyStrokes[1].pathLen <= bodyStrokes[1].directDist * 1.12 &&
+    Math.min(bodyStrokes[0].diag, bodyStrokes[1].diag) >=
+      Math.max(bodyStrokes[0].diag, bodyStrokes[1].diag) * 0.48;
+
+  const isPlusLike =
+    bothStraightAndComparable &&
     ((bodyStrokes[0].width > bodyStrokes[0].height * 1.8 &&
       bodyStrokes[1].height > bodyStrokes[1].width * 1.8) ||
       (bodyStrokes[1].width > bodyStrokes[1].height * 1.8 &&
         bodyStrokes[0].height > bodyStrokes[0].width * 1.8));
 
   const isEqualsLike =
-    bodyStrokes.length === 2 &&
-    dotStrokes.length === 0 &&
-    bodyStrokes[0].width > bodyStrokes[0].height * 1.8 &&
-    bodyStrokes[1].width > bodyStrokes[1].height * 1.8 &&
+    bothStraightAndComparable &&
+    bodyStrokes[0].width > bodyStrokes[0].height * 2.2 &&
+    bodyStrokes[1].width > bodyStrokes[1].height * 2.2 &&
     Math.abs(bodyStrokes[0].cy - bodyStrokes[1].cy) > 6;
 
-  const dotCount = Math.min(3, dotStrokes.length);
+  // Check if mainBody is a curved letter body (not a straight vertical/horizontal line)
+  const mainIsCurvedLetter =
+    !isPlusLike &&
+    !isEqualsLike &&
+    mainBody.pathLen > mainBody.directDist * 1.06 &&
+    mainBody.width > mainBody.height * 0.35;
+
+  for (const aux of auxStrokes) {
+    const isClearlyAboveOrBelow =
+      aux.cy < mainBody.minY + mainBody.height * 0.32 ||
+      aux.cy > mainBody.maxY - mainBody.height * 0.25;
+
+    // In real Persian handwriting:
+    // - A small caret/inverted-V (^) above/below a curved letter body is 3 connected dots (پ، چ، ژ، ش، ث)
+    // - A short horizontal dash above/below a curved letter body is 2 connected dots (ت، ق، ی)
+    if (
+      mainIsCurvedLetter &&
+      isClearlyAboveOrBelow &&
+      aux.diag < mainBody.diag * 0.58 &&
+      aux.pathLen < mainBody.pathLen * 0.55 &&
+      explicitDots.length === 0
+    ) {
+      if (aux.pathLen > aux.directDist * 1.24 && aux.height > aux.width * 0.28) {
+        inferredExtraDots += 3; // Connected 3-dot caret (^)
+        virtualDotCentersY.push(aux.cy);
+        continue;
+      } else if (aux.width > aux.height * 1.65) {
+        inferredExtraDots += 2; // Connected 2-dot horizontal dash
+        virtualDotCentersY.push(aux.cy);
+        continue;
+      }
+    }
+
+    if (aux.pathLen <= mainBody.pathLen * 1.15 && aux.points.length <= 45) {
+      barCount++;
+    } else {
+      combinedBodyPoints.push(...aux.points);
+    }
+  }
+
+  const dotCount = Math.min(3, explicitDots.length + inferredExtraDots);
   let dotPos: 'none' | 'above' | 'below' | 'inside' = 'none';
-  if (dotCount > 0) {
-    const avgDotY = dotStrokes.reduce((s, d) => s + d.cy, 0) / dotStrokes.length;
-    if (avgDotY < mainBody.minY + mainBody.height * 0.35) {
+  if (dotCount > 0 && virtualDotCentersY.length > 0) {
+    const avgDotY =
+      virtualDotCentersY.reduce((s, y) => s + y, 0) / virtualDotCentersY.length;
+    if (avgDotY < mainBody.minY + mainBody.height * 0.38) {
       dotPos = 'above';
-    } else if (avgDotY > mainBody.maxY - mainBody.height * 0.25) {
+    } else if (avgDotY > mainBody.maxY - mainBody.height * 0.28) {
       dotPos = 'below';
     } else {
       dotPos = 'inside';
@@ -1957,10 +2117,10 @@ function recognizeSingleCluster(
 
   // Special case: division sign '÷' has 1 horizontal line + 2 dots (1 above, 1 below)
   const isDivisionLike =
-    dotCount === 2 &&
+    explicitDots.length === 2 &&
     mainBody.width / mainBody.height > 2.0 &&
-    dotStrokes.some((d) => d.cy < mainBody.cy) &&
-    dotStrokes.some((d) => d.cy > mainBody.cy);
+    explicitDots.some((d) => d.cy < mainBody.cy) &&
+    explicitDots.some((d) => d.cy > mainBody.cy);
 
   const normInput = normalizePointsToBox100(combinedBodyPoints);
 
@@ -1981,10 +2141,10 @@ function recognizeSingleCluster(
 
     if (isPlusLike) {
       if (proto.char === '+') dist *= 0.25;
-      else if (proto.char === '=') dist += 35;
+      else if (proto.char === '=' || proto.char === '−') dist += 35;
     } else if (isEqualsLike) {
       if (proto.char === '=') dist *= 0.25;
-      else if (proto.char === '+') dist += 35;
+      else if (proto.char === '+' || proto.char === '−') dist += 35;
     }
 
     // 1. Dot count & dot position bonus/penalty (critical for ب پ ت ث ج چ ح خ د ذ ر ز ژ س ش ص ض ط ظ ع غ ف ق ن)
@@ -1994,7 +2154,7 @@ function recognizeSingleCluster(
       dist += Math.abs(proto.dots - dotCount) * 26;
     } else if (dotCount > 0) {
       if (proto.dotPos === dotPos) {
-        dist *= 0.62; // Strong boost when both dot count and dot position match!
+        dist *= 0.6; // Strong boost when both dot count and dot position match!
       } else {
         dist += 18;
       }
@@ -2022,10 +2182,13 @@ function recognizeSingleCluster(
       dist += 14;
     }
 
-    // 5. Mode preference boost
+    // 5. Mode preference boost (in 'all' mode, prioritize Persian digits & letters over English lookalikes)
+    if (mode === 'all' && (proto.category === 'fa-digit' || proto.category === 'fa-letter')) {
+      dist *= 0.84;
+    }
     if (mode === 'fa-digits' && proto.category === 'fa-digit') dist *= 0.82;
     if (mode === 'en-digits' && proto.category === 'en-digit') dist *= 0.82;
-    if (mode === 'fa-text' && proto.category === 'fa-letter') dist *= 0.85;
+    if (mode === 'fa-text' && proto.category === 'fa-letter') dist *= 0.82;
     if (mode === 'en-text' && proto.category === 'en-letter') dist *= 0.85;
 
     const confidence = Math.max(12, Math.min(99, Math.round(100 - dist * 1.15)));
@@ -2065,9 +2228,9 @@ export function recognizeOfflineHandwriting(
     };
   }
 
-  const clusters = clusterHandwritingStrokes(nonEmpty, mode);
-  if (clusters.length === 1) {
-    const singleCandidates = recognizeSingleCluster(clusters[0], mode).slice(0, 8);
+  const rawClusters = clusterHandwritingStrokes(nonEmpty, mode);
+  if (rawClusters.length === 1) {
+    const singleCandidates = recognizeSingleCluster(rawClusters[0], mode).slice(0, 8);
     const best = singleCandidates[0]?.text ?? '';
     const bestConfidence = singleCandidates[0]?.confidence ?? 0;
 
@@ -2093,8 +2256,54 @@ export function recognizeOfflineHandwriting(
     };
   }
 
-  // Multi-cluster recognition (e.g. writing multi-digit number ۱۲۵ or multi-letter word سلام)
-  const perClusterRankings = clusters.map((c) => recognizeSingleCluster(c, mode));
+  // Multi-cluster recognition: determine whether clusters represent a Persian word (RTL) or number/English (LTR)
+  const clusterItems = rawClusters.map((c) => ({
+    cluster: c,
+    cx: c.reduce((s, i) => s + i.cx, 0) / c.length,
+    rankings: recognizeSingleCluster(c, mode),
+  }));
+
+  let faLetterCount = 0;
+  let digitOrEnCount = 0;
+  for (const item of clusterItems) {
+    const top = item.rankings[0];
+    if (!top) continue;
+    // Ignore ambiguous vertical line ('۱' vs 'ا') when counting context
+    if (top.text === '۱' || top.text === 'ا' || top.text === '1' || top.text === 'I') continue;
+    if (top.category === 'fa-letter') faLetterCount++;
+    else if (top.category === 'fa-digit' || top.category === 'en-digit' || top.category === 'en-letter') {
+      digitOrEnCount++;
+    }
+  }
+
+  const isPersianWordContext =
+    mode === 'fa-text' || (mode === 'all' && faLetterCount > digitOrEnCount);
+
+  // Order clusters RTL for Persian words, LTR for numbers & English
+  clusterItems.sort((a, b) => (isPersianWordContext ? b.cx - a.cx : a.cx - b.cx));
+
+  // Contextually disambiguate vertical stroke ('ا' vs '۱') and circle ('ه' vs '۰')
+  const perClusterRankings = clusterItems.map((item) => {
+    const r = [...item.rankings];
+    if (r.length > 0) {
+      if (isPersianWordContext && (r[0].text === '۱' || r[0].text === '1' || r[0].text === 'I')) {
+        const alefIdx = r.findIndex((c) => c.text === 'ا');
+        if (alefIdx > 0) {
+          const [alef] = r.splice(alefIdx, 1);
+          r.unshift(alef);
+        }
+      } else if (!isPersianWordContext && r[0].text === 'ا') {
+        const oneChar = mode === 'en-digits' || mode === 'en-text' ? '1' : '۱';
+        const oneIdx = r.findIndex((c) => c.text === oneChar);
+        if (oneIdx > 0) {
+          const [one] = r.splice(oneIdx, 1);
+          r.unshift(one);
+        }
+      }
+    }
+    return r;
+  });
+
   const combinedBest = perClusterRankings.map((r) => r[0]?.text ?? '').join('');
   const avgConfidence = Math.round(
     perClusterRankings.reduce((s, r) => s + (r[0]?.confidence ?? 70), 0) /
@@ -2111,7 +2320,7 @@ export function recognizeOfflineHandwriting(
     },
   ];
 
-  // Alternative using #2 candidate of the least confident cluster
+  // Alternative using #2 candidate of each cluster
   for (let i = 0; i < perClusterRankings.length; i++) {
     if (perClusterRankings[i].length > 1) {
       const altText = perClusterRankings
@@ -2129,7 +2338,7 @@ export function recognizeOfflineHandwriting(
   }
 
   // Also add single-cluster recognition (in case all strokes were meant as one single character)
-  const allStrokesAsOne = recognizeSingleCluster(clusters.flat(), mode).slice(0, 4);
+  const allStrokesAsOne = recognizeSingleCluster(rawClusters.flat(), mode).slice(0, 4);
   for (const singleCand of allStrokesAsOne) {
     if (!multiCandidates.some((c) => c.text === singleCand.text)) {
       multiCandidates.push(singleCand);
@@ -2137,8 +2346,14 @@ export function recognizeOfflineHandwriting(
   }
 
   const dict = mode === 'en-text' ? OFFLINE_WORD_DICTIONARY_EN : OFFLINE_WORD_DICTIONARY_FA;
+  const lowerCombined = combinedBest.toLowerCase();
   const wordCompletions = dict
-    .filter((w) => w.startsWith(combinedBest) || w.startsWith(combinedBest[0] ?? ''))
+    .filter(
+      (w) =>
+        w.toLowerCase().startsWith(lowerCombined) ||
+        (lowerCombined.length > 0 && w.toLowerCase().startsWith(lowerCombined[0])) ||
+        (lowerCombined.length > 0 && w.toLowerCase().includes(lowerCombined))
+    )
     .slice(0, 6);
 
   return {
@@ -2146,6 +2361,7 @@ export function recognizeOfflineHandwriting(
     bestConfidence: avgConfidence,
     candidates: multiCandidates.slice(0, 8),
     wordCompletions: wordCompletions.length > 0 ? wordCompletions : dict.slice(0, 5),
-    clusterCount: clusters.length,
+    clusterCount: rawClusters.length,
   };
 }
+
