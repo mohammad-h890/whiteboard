@@ -174,7 +174,9 @@ export const BareBoardShapeGraphic: React.FC<BareBoardShapeGraphicProps> = ({
         }}
         className="text-6xl font-extrabold px-2.5 py-1 leading-none tracking-tight select-none"
       >
-        {fmt(w.persianText || w.summary || '۰')}
+        {w.title.includes('انگلیسی')
+          ? w.persianText || w.summary || '0'
+          : fmt(w.persianText || w.summary || '۰')}
       </div>
     );
   }
@@ -708,45 +710,260 @@ export const BareBoardShapeGraphic: React.FC<BareBoardShapeGraphicProps> = ({
     );
   }
 
-  // 7. Place Value Cubes (مکعب ارزش مکانی: ده‌تایی و یکی)
+  // 7. Place Value Cubes (مکعب ارزش مکانی: هزارتایی، صدتایی، ده‌تایی و یکی)
   if (w.title.includes('مکعب ارزش مکانی') || w.title.includes('ارزش مکانی')) {
-    const tenColor = innerColor;
-    const oneColor = innerColor === '#f59e0b' ? '#38bdf8' : '#f59e0b';
-    const tens = Math.min(9, Math.max(0, num));
-    const ones = Math.min(20, Math.max(0, den));
+    const hasStructured =
+      w.placeThousands !== undefined ||
+      w.placeHundreds !== undefined ||
+      w.placeTens !== undefined ||
+      w.placeOnes !== undefined;
+
+    const thousands = Math.min(9, Math.max(0, w.placeThousands ?? 0));
+    const hundreds = Math.min(9, Math.max(0, w.placeHundreds ?? 0));
+    const tens = Math.min(
+      19,
+      Math.max(0, hasStructured ? (w.placeTens ?? 0) : Math.min(9, num))
+    );
+    const ones = Math.min(
+      20,
+      Math.max(0, hasStructured ? (w.placeOnes ?? 0) : Math.min(20, den))
+    );
+    const totalVal = thousands * 1000 + hundreds * 100 + tens * 10 + ones;
+
+    const thousandColor = '#8b5cf6';
+    const thousandTop = '#a78bfa';
+    const thousandSide = '#6d28d9';
+    const hundredColor = '#10b981';
+    const tenColor = innerColor || '#f59e0b';
+    const oneColor = tenColor === '#0ea5e9' || tenColor === '#38bdf8' ? '#f59e0b' : '#38bdf8';
+
+    // Dynamic horizontal layout across active place-value groups
+    const gap = 14;
+    let cursorX = 16;
+
+    const thStartX = cursorX;
+    const thCols = Math.min(thousands, 5);
+    const thRows = thousands > 5 ? 2 : thousands > 0 ? 1 : 0;
+    const thWidth = thousands > 0 ? thCols * 48 + (thCols - 1) * 6 : 0;
+    if (thWidth > 0) cursorX += thWidth + gap;
+
+    const huStartX = cursorX;
+    const huCols = Math.min(hundreds, 5);
+    const huRows = hundreds > 5 ? 2 : hundreds > 0 ? 1 : 0;
+    const huWidth = hundreds > 0 ? huCols * 42 + (huCols - 1) * 5 : 0;
+    if (huWidth > 0) cursorX += huWidth + gap;
+
+    const teStartX = cursorX;
+    const teWidth = tens > 0 ? tens * 14 : 0;
+    if (teWidth > 0) cursorX += teWidth + gap;
+
+    const onStartX = cursorX;
+    const onCols = ones > 0 ? Math.ceil(ones / 5) : 0;
+    const onWidth = onCols > 0 ? onCols * 14 : 0;
+    if (onWidth > 0) cursorX += onWidth + gap;
+
+    const viewW = Math.max(250, cursorX + 6);
+    const hasTwoRowBlocks = thRows > 1 || huRows > 1;
+    const viewH = hasTwoRowBlocks ? 148 : 98;
+    const baseBottomY = viewH - 8;
+    const svgWidthPx = Math.min(540, Math.max(260, Math.round(viewW * 1.04)));
+    const svgHeightPx = Math.round((svgWidthPx * viewH) / viewW);
+
+    const parts: Array<{ label: string; colorClass: string }> = [];
+    if (thousands > 0) parts.push({ label: `${fmt(thousands)} هزارتایی`, colorClass: 'text-violet-700' });
+    if (hundreds > 0) parts.push({ label: `${fmt(hundreds)} صدتایی`, colorClass: 'text-emerald-700' });
+    if (tens > 0) parts.push({ label: `${fmt(tens)} ده‌تایی`, colorClass: 'text-amber-700' });
+    if (ones > 0 || parts.length === 0) parts.push({ label: `${fmt(ones)} یکی`, colorClass: 'text-sky-700' });
+
     return (
-      <svg viewBox="0 0 240 112" className="w-60 h-28 overflow-visible select-none drop-shadow-xs">
-        <rect x="4" y="4" width="232" height="104" rx="12" fill="rgba(255,255,255,0.9)" stroke={structColor} strokeOpacity="0.2" strokeWidth="1.5" />
-        {Array.from({ length: tens }).map((_, i) => (
-          <g key={`ten-${i}`} transform={`translate(${14 + i * 15}, 12)`}>
-            <rect width="11" height="70" fill={tenColor} stroke={structColor} strokeWidth="1.6" rx="2" />
-            {Array.from({ length: 9 }).map((__, r) => (
-              <line key={r} x1="0" y1={(r + 1) * 7} x2="11" y2={(r + 1) * 7} stroke={structColor} strokeWidth="1" />
-            ))}
-          </g>
-        ))}
-        {Array.from({ length: ones }).map((_, i) => {
-          const col = Math.floor(i / 5);
-          const row = i % 5;
-          const startX = 24 + tens * 15;
-          return (
-            <rect
-              key={`one-${i}`}
-              x={startX + col * 14}
-              y={68 - row * 13}
-              width="11"
-              height="11"
-              rx="2"
-              fill={oneColor}
-              stroke={structColor}
-              strokeWidth="1.6"
-            />
-          );
-        })}
-        <text x="120" y="100" textAnchor="middle" fill={structColor} className="text-[11px] font-extrabold font-mono">
-          {fmt(tens)} ده‌تایی + {fmt(ones)} یکی = {fmt(tens * 10 + ones)}
-        </text>
-      </svg>
+      <div
+        data-testid="bare-place-value-widget"
+        className="inline-flex flex-col items-center rounded-2xl bg-white/95 border border-slate-300/80 shadow-xs px-3.5 pt-2.5 pb-2 select-none"
+      >
+        <svg
+          viewBox={`0 0 ${viewW} ${viewH}`}
+          style={{ width: `${svgWidthPx}px`, height: `${svgHeightPx}px` }}
+          className="overflow-visible select-none"
+        >
+          {/* Thousands: 3D Isometric 10×10×10 Cubes */}
+          {Array.from({ length: thousands }).map((_, i) => {
+            const col = i % 5;
+            const row = Math.floor(i / 5);
+            const x = thStartX + col * 54;
+            const y = hasTwoRowBlocks ? 12 + row * 62 : baseBottomY - 52;
+            const s = 38;
+            const dx = 10;
+            const dy = 10;
+            return (
+              <g key={`th-${i}`} transform={`translate(${x}, ${y})`}>
+                {/* Top face */}
+                <polygon
+                  points={`${dx},0 ${dx + s},0 ${s},${dy} 0,${dy}`}
+                  fill={thousandTop}
+                  stroke={structColor}
+                  strokeWidth="1.2"
+                />
+                {/* Right side face */}
+                <polygon
+                  points={`${s},${dy} ${s + dx},0 ${s + dx},${s} ${s},${dy + s}`}
+                  fill={thousandSide}
+                  stroke={structColor}
+                  strokeWidth="1.2"
+                />
+                {/* Front 5x5 visual grid face */}
+                <rect
+                  x="0"
+                  y={dy}
+                  width={s}
+                  height={s}
+                  fill={thousandColor}
+                  stroke={structColor}
+                  strokeWidth="1.4"
+                />
+                {[1, 2, 3, 4].map((g) => (
+                  <g key={g}>
+                    <line
+                      x1={(s * g) / 5}
+                      y1={dy}
+                      x2={(s * g) / 5}
+                      y2={dy + s}
+                      stroke="rgba(255,255,255,0.45)"
+                      strokeWidth="0.8"
+                    />
+                    <line
+                      x1="0"
+                      y1={dy + (s * g) / 5}
+                      x2={s}
+                      y2={dy + (s * g) / 5}
+                      stroke="rgba(255,255,255,0.45)"
+                      strokeWidth="0.8"
+                    />
+                  </g>
+                ))}
+                <text
+                  x={s / 2}
+                  y={dy + s / 2 + 4}
+                  textAnchor="middle"
+                  fill="#ffffff"
+                  className="text-[9px] font-extrabold font-mono"
+                >
+                  {fmt(1000)}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Hundreds: 10×10 Flat Squares */}
+          {Array.from({ length: hundreds }).map((_, i) => {
+            const col = i % 5;
+            const row = Math.floor(i / 5);
+            const x = huStartX + col * 47;
+            const y = hasTwoRowBlocks ? 18 + row * 56 : baseBottomY - 42;
+            const s = 40;
+            return (
+              <g key={`hu-${i}`} transform={`translate(${x}, ${y})`}>
+                <rect
+                  width={s}
+                  height={s}
+                  rx="2"
+                  fill={hundredColor}
+                  stroke={structColor}
+                  strokeWidth="1.4"
+                />
+                {[1, 2, 3, 4].map((g) => (
+                  <g key={g}>
+                    <line
+                      x1={(s * g) / 5}
+                      y1="0"
+                      x2={(s * g) / 5}
+                      y2={s}
+                      stroke="rgba(255,255,255,0.45)"
+                      strokeWidth="0.8"
+                    />
+                    <line
+                      x1="0"
+                      y1={(s * g) / 5}
+                      x2={s}
+                      y2={(s * g) / 5}
+                      stroke="rgba(255,255,255,0.45)"
+                      strokeWidth="0.8"
+                    />
+                  </g>
+                ))}
+                <text
+                  x={s / 2}
+                  y={s / 2 + 4}
+                  textAnchor="middle"
+                  fill="#ffffff"
+                  className="text-[9px] font-extrabold font-mono"
+                >
+                  {fmt(100)}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Tens: 1×10 Vertical Rods */}
+          {Array.from({ length: tens }).map((_, i) => (
+            <g key={`ten-${i}`} transform={`translate(${teStartX + i * 14}, ${baseBottomY - 70})`}>
+              <rect
+                width="10"
+                height="70"
+                fill={tenColor}
+                stroke={structColor}
+                strokeWidth="1.4"
+                rx="2"
+              />
+              {Array.from({ length: 9 }).map((__, r) => (
+                <line
+                  key={r}
+                  x1="0"
+                  y1={(r + 1) * 7}
+                  x2="10"
+                  y2={(r + 1) * 7}
+                  stroke={structColor}
+                  strokeWidth="0.8"
+                />
+              ))}
+            </g>
+          ))}
+
+          {/* Ones: 1×1 Unit Cubes */}
+          {Array.from({ length: ones }).map((_, i) => {
+            const col = Math.floor(i / 5);
+            const row = i % 5;
+            return (
+              <rect
+                key={`one-${i}`}
+                x={onStartX + col * 14}
+                y={baseBottomY - 12 - row * 13}
+                width="11"
+                height="11"
+                rx="2"
+                fill={oneColor}
+                stroke={structColor}
+                strokeWidth="1.4"
+              />
+            );
+          })}
+        </svg>
+
+        <div
+          dir="rtl"
+          className="mt-1 pt-1.5 border-t border-slate-200/80 w-full flex flex-wrap items-center justify-center gap-x-1.5 gap-y-0.5 text-[11px] font-extrabold text-slate-800 whitespace-nowrap"
+        >
+          {parts.map((part, idx) => (
+            <React.Fragment key={part.label}>
+              {idx > 0 && <span className="text-slate-400">+</span>}
+              <span className={part.colorClass}>{part.label}</span>
+            </React.Fragment>
+          ))}
+          <span className="text-slate-400">=</span>
+          <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-900 font-black">
+            {fmt(totalVal)}
+          </span>
+        </div>
+      </div>
     );
   }
 

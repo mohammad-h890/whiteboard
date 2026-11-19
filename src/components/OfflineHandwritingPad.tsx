@@ -11,10 +11,15 @@ import {
   Maximize2,
   Minimize2,
   Calculator,
+  Zap,
+  Check,
+  Sparkles,
 } from 'lucide-react';
 import {
   HandwritingRecognitionMode,
   HandwritingStroke,
+  HandwritingCandidate,
+  InstantSymbolBounds,
   recognizeOfflineHandwriting,
   fitStrokeToBezierCurve,
   normalizeHandwritingStrokeGeometry,
@@ -22,12 +27,36 @@ import {
 import { parseTextToFlowchart } from '../core/studioAndAiEngine';
 import { toPersianDigits } from '../core/featureEngine';
 
+export interface LastAutoReplacedSymbol {
+  widgetId?: string;
+  strokeId?: string;
+  text: string;
+  candidates: HandwritingCandidate[];
+  sourceStrokes?: HandwritingStroke[];
+  box?: InstantSymbolBounds;
+}
+
 export interface OfflineHandwritingPadProps {
   isOpen: boolean;
   onClose: () => void;
   strokeColor: string;
   usePersianNumerals: boolean;
   initialTab?: 'handwriting' | 'flowchart';
+  mode?: HandwritingRecognitionMode;
+  onChangeMode?: (nextMode: HandwritingRecognitionMode) => void;
+  instantReplaceMode?: boolean;
+  onToggleInstantReplaceMode?: () => void;
+  convertDelayMs?: number;
+  onChangeConvertDelayMs?: (ms: number) => void;
+  lastAutoReplaced?: LastAutoReplacedSymbol | null;
+  onReplaceLastAutoItem?: (newText: string) => void;
+  onUndoLastAutoItem?: () => void;
+  offlineLearningStats?: {
+    prototypeCount: number;
+    totalFeedbackCount: number;
+    maxPrototypes: number;
+  };
+  onResetOfflineLearning?: () => void;
   beautifierActive?: boolean;
   onToggleBeautifier?: () => void;
   boardStrokes?: HandwritingStroke[];
@@ -140,6 +169,17 @@ export const OfflineHandwritingPad: React.FC<OfflineHandwritingPadProps> = ({
   strokeColor,
   usePersianNumerals,
   initialTab = 'handwriting',
+  mode: controlledMode,
+  onChangeMode,
+  instantReplaceMode = true,
+  onToggleInstantReplaceMode,
+  convertDelayMs = 1500,
+  onChangeConvertDelayMs,
+  lastAutoReplaced = null,
+  onReplaceLastAutoItem,
+  onUndoLastAutoItem,
+  offlineLearningStats,
+  onResetOfflineLearning,
   beautifierActive = true,
   onToggleBeautifier,
   boardStrokes = [],
@@ -150,21 +190,56 @@ export const OfflineHandwritingPad: React.FC<OfflineHandwritingPadProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'handwriting' | 'flowchart'>(initialTab);
   const [isExpanded, setIsExpanded] = useState<boolean>(false);
-  const [mode, setMode] = useState<HandwritingRecognitionMode>('all');
+  const [internalMode, setInternalMode] = useState<HandwritingRecognitionMode>('all');
+  const mode = controlledMode ?? internalMode;
+  const setMode = (next: HandwritingRecognitionMode) => {
+    setInternalMode(next);
+    onChangeMode?.(next);
+  };
   const [localStrokes, setLocalStrokes] = useState<HandwritingStroke[]>([]);
   const [currentStroke, setCurrentStroke] = useState<HandwritingStroke>([]);
   const [isDrawing, setIsDrawing] = useState<boolean>(false);
   const [committedText, setCommittedText] = useState<string>('');
+  const [customCorrectionText, setCustomCorrectionText] = useState<string>('');
+  const [learnedNotice, setLearnedNotice] = useState<string | null>(null);
   const [flowchartInput, setFlowchartInput] = useState<string>(
     'شروع -> محاسبه فرمول -> بررسی نتیجه -> پایان'
   );
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastPenTimestampRef = useRef<number>(0);
+  const learnedNoticeTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     setActiveTab(initialTab);
   }, [initialTab]);
+
+  useEffect(() => {
+    setCustomCorrectionText(lastAutoReplaced?.text ?? '');
+  }, [lastAutoReplaced?.widgetId, lastAutoReplaced?.strokeId, lastAutoReplaced?.text]);
+
+  useEffect(() => {
+    return () => {
+      if (learnedNoticeTimerRef.current !== null) {
+        window.clearTimeout(learnedNoticeTimerRef.current);
+      }
+    };
+  }, []);
+
+  const triggerInstantCorrection = (rawNext: string) => {
+    const cleaned = rawNext.trim();
+    if (!cleaned || !onReplaceLastAutoItem) return;
+    onReplaceLastAutoItem(cleaned);
+    setCustomCorrectionText(cleaned);
+    if (learnedNoticeTimerRef.current !== null) {
+      window.clearTimeout(learnedNoticeTimerRef.current);
+    }
+    setLearnedNotice(`«${cleaned}» ثبت و یاد گرفته شد`);
+    learnedNoticeTimerRef.current = window.setTimeout(() => {
+      setLearnedNotice(null);
+      learnedNoticeTimerRef.current = null;
+    }, 2200);
+  };
 
   const activeStrokes = React.useMemo(() => {
     const raw = [...boardStrokes, ...localStrokes];
@@ -189,8 +264,10 @@ export const OfflineHandwritingPad: React.FC<OfflineHandwritingPadProps> = ({
   const handleUndoLastInk = () => {
     if (localStrokes.length > 0) {
       setLocalStrokes((prev) => prev.slice(0, -1));
-    } else {
+    } else if (boardStrokes.length > 0) {
       onUndoLastBoardStroke?.();
+    } else if (lastAutoReplaced && onUndoLastAutoItem) {
+      onUndoLastAutoItem();
     }
   };
 
@@ -376,8 +453,8 @@ export const OfflineHandwritingPad: React.FC<OfflineHandwritingPadProps> = ({
           <button
             type="button"
             onClick={handleUndoLastInk}
-            disabled={activeStrokes.length === 0}
-            title="واگرد آخرین خط"
+            disabled={activeStrokes.length === 0 && !lastAutoReplaced}
+            title="واگرد آخرین خط یا مورد جایگزین‌شده (Ctrl+Z)"
             aria-label="واگرد آخرین خط دست‌نویس"
             className="p-1 rounded hover:bg-slate-200/70 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 disabled:opacity-35"
           >
@@ -485,7 +562,136 @@ export const OfflineHandwritingPad: React.FC<OfflineHandwritingPadProps> = ({
             </div>
           )}
 
-          {/* Top 5 Candidate Suggestions Bar */}
+          {/* Instant Per-Symbol / Multi-Digit In-Place Replacement Toggle & Pause Delay */}
+          {onToggleInstantReplaceMode && (
+            <div className="flex items-center justify-between gap-1.5 pb-0.5 flex-wrap">
+              <button
+                type="button"
+                data-testid="toggle-instant-replace-btn"
+                onClick={onToggleInstantReplaceMode}
+                title="با روشن بودن این گزینه، اعداد (تک‌رقمی تا ۴ رقمی) و علامت‌ها در جای دست‌نویس جانشین می‌شوند"
+                className={`px-2 py-0.5 rounded-md font-bold text-[10px] flex items-center gap-1 border transition-colors whitespace-nowrap shrink-0 ${
+                  instantReplaceMode
+                    ? 'bg-emerald-600 text-white border-emerald-500 shadow-2xs'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                }`}
+              >
+                <Zap className="w-3 h-3 shrink-0" />
+                <span>جایگزینی درجا: {instantReplaceMode ? 'روشن' : 'خاموش'}</span>
+              </button>
+              {instantReplaceMode && onChangeConvertDelayMs ? (
+                <label className="flex items-center gap-1 text-[10px] text-slate-600 dark:text-slate-300 font-semibold shrink-0">
+                  <span>مکث تبدیل:</span>
+                  <select
+                    data-testid="instant-convert-delay-select"
+                    aria-label="زمان مکث تبدیل دست‌نویس"
+                    value={convertDelayMs}
+                    onChange={(e) => onChangeConvertDelayMs(Number(e.target.value))}
+                    className="px-1.5 py-0.5 rounded-md bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-[10px] font-bold text-slate-700 dark:text-slate-200"
+                  >
+                    <option value={900}>۰.۹ ثانیه (سریع)</option>
+                    <option value={1500}>۱.۵ ثانیه (۳-۴ رقمی)</option>
+                    <option value={2500}>۲.۵ ثانیه (آرام)</option>
+                  </select>
+                </label>
+              ) : (
+                <span className="text-[9.5px] text-slate-500 dark:text-slate-400 truncate">
+                  حالت دستی (دکمه وارد کردن)
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* 1-Click + Manual Input In-Place Correction Bar with Offline Adaptive Learning */}
+          {instantReplaceMode && activeStrokes.length === 0 && lastAutoReplaced && (
+            <div
+              data-testid="instant-replace-correction-bar"
+              className="space-y-1.5 py-1.5 px-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30"
+            >
+              <div className="flex items-center gap-1 overflow-x-auto scrollbar-none">
+                <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 shrink-0">
+                  اصلاح فوری:
+                </span>
+                {lastAutoReplaced.candidates.slice(0, 6).map((cand, idx) => {
+                  const isActive = cand.text === lastAutoReplaced.text;
+                  return (
+                    <button
+                      key={`${cand.text}-${idx}`}
+                      type="button"
+                      data-testid={`instant-replace-candidate-${idx}`}
+                      onClick={() => triggerInstantCorrection(cand.text)}
+                      className={`px-2 py-0.5 rounded font-extrabold text-[11px] shrink-0 transition-colors ${
+                        isActive
+                          ? 'bg-emerald-600 text-white shadow-2xs'
+                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-emerald-500'
+                      }`}
+                    >
+                      {cand.text}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex items-center gap-1">
+                <input
+                  type="text"
+                  data-testid="instant-correction-input"
+                  value={customCorrectionText}
+                  onChange={(e) => setCustomCorrectionText(e.target.value)}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      triggerInstantCorrection(customCorrectionText);
+                    }
+                  }}
+                  placeholder="مقدار صحیح را بنویسید (مثلاً ۷ یا ۱۲۵)..."
+                  aria-label="کادر نوشتن اصلاح فوری دست‌نویس"
+                  className="flex-1 min-w-0 px-2 py-1 rounded-md bg-white dark:bg-slate-800 border border-emerald-500/45 focus:border-emerald-600 text-[11px] font-extrabold text-slate-900 dark:text-slate-100 outline-none"
+                />
+                <button
+                  type="button"
+                  data-testid="instant-correction-apply-btn"
+                  onClick={() => triggerInstantCorrection(customCorrectionText)}
+                  disabled={!customCorrectionText.trim()}
+                  className="px-2 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold text-[10px] flex items-center gap-0.5 shrink-0 transition-colors whitespace-nowrap"
+                >
+                  <Check className="w-3 h-3" />
+                  <span>ثبت اصلاح</span>
+                </button>
+              </div>
+
+              {(learnedNotice || (offlineLearningStats && offlineLearningStats.totalFeedbackCount > 0)) && (
+                <div className="flex items-center justify-between gap-1 text-[9.5px] text-emerald-700 dark:text-emerald-300 font-semibold">
+                  <span className="flex items-center gap-1 truncate" data-testid="offline-learning-status">
+                    <Sparkles className="w-2.5 h-2.5 shrink-0" />
+                    {learnedNotice ? (
+                      <span>{learnedNotice}</span>
+                    ) : (
+                      <span>
+                        یادگیری آفلاین: {fmt(offlineLearningStats?.totalFeedbackCount ?? 0)} بازخورد (فشرده)
+                      </span>
+                    )}
+                  </span>
+                  {offlineLearningStats &&
+                    offlineLearningStats.prototypeCount > 0 &&
+                    onResetOfflineLearning && (
+                      <button
+                        type="button"
+                        data-testid="reset-offline-learning-btn"
+                        onClick={onResetOfflineLearning}
+                        title="بازنشانی حافظه یادگیری آفلاین دست‌نویس"
+                        className="text-[9px] text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 underline shrink-0"
+                      >
+                        بازنشانی
+                      </button>
+                    )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Top 5 Candidate Suggestions Bar (for live ink or manual mode) */}
           {recognition.candidates.length > 0 && (
             <div
               data-testid="gboard-candidate-bar"

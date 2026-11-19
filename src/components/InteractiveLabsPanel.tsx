@@ -123,8 +123,10 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
   const [fractionFillColor, setFractionFillColor] = useState<string>('#0ea5e9');
   const [fractionDividerColor, setFractionDividerColor] = useState<string>('#f59e0b');
   const [showAutoFractionLabel, setShowAutoFractionLabel] = useState<boolean>(true);
-  const [onesCount, setOnesCount] = useState<number>(8);
-  const [tensCount, setTensCount] = useState<number>(2);
+  const [thousandsCount, setThousandsCount] = useState<number>(1);
+  const [hundredsCount, setHundredsCount] = useState<number>(2);
+  const [tensCount, setTensCount] = useState<number>(3);
+  const [onesCount, setOnesCount] = useState<number>(5);
   // Upgraded Number Line (محور اعداد کسری با طول و تقسیم‌بندی دلخواه و چند فلش منحنی)
   const [axisMin, setAxisMin] = useState<number>(0);
   const [axisMax, setAxisMax] = useState<number>(10);
@@ -223,7 +225,17 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
   const handleAddOneBlock = () => {
     if (onesCount + 1 >= 10) {
       setOnesCount(0);
-      setTensCount((t) => t + 1);
+      if (tensCount + 1 >= 10) {
+        setTensCount(0);
+        if (hundredsCount + 1 >= 10) {
+          setHundredsCount(0);
+          setThousandsCount((th) => Math.min(9, th + 1));
+        } else {
+          setHundredsCount((h) => h + 1);
+        }
+      } else {
+        setTensCount((t) => t + 1);
+      }
     } else {
       setOnesCount((o) => o + 1);
     }
@@ -232,7 +244,21 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
   const handleBreakTenBlock = () => {
     if (tensCount > 0) {
       setTensCount((t) => t - 1);
-      setOnesCount((o) => o + 10);
+      setOnesCount((o) => Math.min(20, o + 10));
+    }
+  };
+
+  const handleBreakHundredBlock = () => {
+    if (hundredsCount > 0) {
+      setHundredsCount((h) => h - 1);
+      setTensCount((t) => Math.min(19, t + 10));
+    }
+  };
+
+  const handleBreakThousandBlock = () => {
+    if (thousandsCount > 0) {
+      setThousandsCount((th) => th - 1);
+      setHundredsCount((h) => Math.min(19, h + 10));
     }
   };
 
@@ -635,108 +661,215 @@ export const InteractiveLabsPanel: React.FC<InteractiveLabsPanelProps> = ({
                       </button>
                     </div>
 
-                    <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-2.5">
-                      <div className="flex items-center justify-between">
+                    <div
+                      data-testid="place-value-lab-card"
+                      className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-2.5"
+                    >
+                      <div className="flex items-center justify-between gap-2">
                         <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                          مکعب‌های ارزش مکانی دبستان (یکی و ده‌تایی)
+                          مکعب‌های ارزش مکانی (یکی تا هزارتایی)
                         </h4>
-                        <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400 tabular-nums">
-                          عدد: {fmt(tensCount * 10 + onesCount)}
+                        <span
+                          data-testid="place-value-total-badge"
+                          className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400 tabular-nums shrink-0"
+                        >
+                          عدد: {fmt(thousandsCount * 1000 + hundredsCount * 100 + tensCount * 10 + onesCount)}
                         </span>
                       </div>
-                      <div className="grid grid-cols-3 gap-1.5 text-[11px]">
+
+                      <label className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="text-slate-600 dark:text-slate-300 font-semibold whitespace-nowrap">
+                          عدد دلخواه (۰ تا ۹۹۹۹):
+                        </span>
+                        <input
+                          type="number"
+                          data-testid="place-value-number-input"
+                          min={0}
+                          max={9999}
+                          value={thousandsCount * 1000 + hundredsCount * 100 + tensCount * 10 + onesCount}
+                          onChange={(e) => {
+                            const v = Math.max(0, Math.min(9999, Math.floor(Number(e.target.value) || 0)));
+                            setThousandsCount(Math.floor(v / 1000));
+                            setHundredsCount(Math.floor((v % 1000) / 100));
+                            setTensCount(Math.floor((v % 100) / 10));
+                            setOnesCount(v % 10);
+                          }}
+                          aria-label="عدد دلخواه ارزش مکانی"
+                          className="w-28 px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold text-center"
+                        />
+                      </label>
+
+                      <div className="grid grid-cols-4 gap-1.5 text-[11px]">
                         <label className="block">
-                          <span className="text-slate-500 block mb-0.5">عدد دلخواه:</span>
+                          <span className="text-violet-600 dark:text-violet-400 font-bold block mb-0.5">هزارتایی:</span>
                           <input
                             type="number"
-                            min={0}
-                            max={99}
-                            value={tensCount * 10 + onesCount}
-                            onChange={(e) => {
-                              const v = Math.max(0, Math.min(99, Number(e.target.value)));
-                              setTensCount(Math.floor(v / 10));
-                              setOnesCount(v % 10);
-                            }}
-                            aria-label="عدد دلخواه ارزش مکانی"
-                            className="w-full px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold text-center"
-                          />
-                        </label>
-                        <label className="block">
-                          <span className="text-slate-500 block mb-0.5">ده‌تایی:</span>
-                          <input
-                            type="number"
+                            data-testid="place-value-thousands-input"
                             min={0}
                             max={9}
-                            value={tensCount}
+                            value={thousandsCount}
                             onChange={(e) =>
-                              setTensCount(Math.max(0, Math.min(9, Number(e.target.value))))
+                              setThousandsCount(Math.max(0, Math.min(9, Number(e.target.value) || 0)))
                             }
-                            aria-label="تعداد ده‌تایی دلخواه"
-                            className="w-full px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold text-center"
+                            aria-label="تعداد هزارتایی"
+                            className="w-full px-1.5 py-1 rounded bg-white dark:bg-slate-900 border border-violet-300 dark:border-violet-700 font-mono font-bold text-center"
                           />
                         </label>
                         <label className="block">
-                          <span className="text-slate-500 block mb-0.5">یکی:</span>
+                          <span className="text-emerald-600 dark:text-emerald-400 font-bold block mb-0.5">صدتایی:</span>
                           <input
                             type="number"
+                            data-testid="place-value-hundreds-input"
+                            min={0}
+                            max={9}
+                            value={hundredsCount}
+                            onChange={(e) =>
+                              setHundredsCount(Math.max(0, Math.min(9, Number(e.target.value) || 0)))
+                            }
+                            aria-label="تعداد صدتایی"
+                            className="w-full px-1.5 py-1 rounded bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-700 font-mono font-bold text-center"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-amber-600 dark:text-amber-400 font-bold block mb-0.5">ده‌تایی:</span>
+                          <input
+                            type="number"
+                            data-testid="place-value-tens-input"
+                            min={0}
+                            max={19}
+                            value={tensCount}
+                            onChange={(e) =>
+                              setTensCount(Math.max(0, Math.min(19, Number(e.target.value) || 0)))
+                            }
+                            aria-label="تعداد ده‌تایی دلخواه"
+                            className="w-full px-1.5 py-1 rounded bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 font-mono font-bold text-center"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-sky-600 dark:text-sky-400 font-bold block mb-0.5">یکی:</span>
+                          <input
+                            type="number"
+                            data-testid="place-value-ones-input"
                             min={0}
                             max={20}
                             value={onesCount}
                             onChange={(e) =>
-                              setOnesCount(Math.max(0, Math.min(20, Number(e.target.value))))
+                              setOnesCount(Math.max(0, Math.min(20, Number(e.target.value) || 0)))
                             }
                             aria-label="تعداد یکی دلخواه"
-                            className="w-full px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold text-center"
+                            className="w-full px-1.5 py-1 rounded bg-white dark:bg-slate-900 border border-sky-300 dark:border-sky-700 font-mono font-bold text-center"
                           />
                         </label>
                       </div>
-                      <div className="flex items-center justify-between gap-2 pt-0.5">
+
+                      <div className="grid grid-cols-2 gap-1.5 pt-0.5">
                         <button
                           type="button"
                           onClick={handleAddOneBlock}
-                          className="flex-1 py-1 px-2 text-[11px] font-medium rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-sky-500 transition-colors"
+                          className="py-1 px-2 text-[10.5px] font-semibold rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-sky-500 transition-colors"
                         >
-                          + افزودن یکی
+                          + افزودن یکی (با انتقال)
                         </button>
                         <button
                           type="button"
                           onClick={handleBreakTenBlock}
                           disabled={tensCount === 0}
-                          className="flex-1 py-1 px-2 text-[11px] font-medium rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-amber-500 disabled:opacity-40 transition-colors"
+                          className="py-1 px-2 text-[10.5px] font-semibold rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-amber-500 disabled:opacity-40 transition-colors"
                         >
-                          شکستن ۱ ده‌تایی به ۱۰ یکی
+                          شکستن ۱ ده‌تایی ← ۱۰ یکی
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleBreakHundredBlock}
+                          disabled={hundredsCount === 0}
+                          className="py-1 px-2 text-[10.5px] font-semibold rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-emerald-500 disabled:opacity-40 transition-colors"
+                        >
+                          شکستن ۱ صدتایی ← ۱۰ ده‌تایی
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleBreakThousandBlock}
+                          disabled={thousandsCount === 0}
+                          className="py-1 px-2 text-[10.5px] font-semibold rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-violet-500 disabled:opacity-40 transition-colors"
+                        >
+                          شکستن ۱ هزارتایی ← ۱۰ صدتایی
                         </button>
                       </div>
-                      <div className="flex items-center gap-3 p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 min-h-14">
-                        <div className="flex items-center gap-1.5">
-                          {Array.from({ length: tensCount }).map((_, i) => (
-                            <div
-                              key={i}
-                              title="میله ده‌تایی"
-                              className="w-3 h-11 rounded-xs bg-amber-500 border border-amber-600"
-                            />
-                          ))}
-                        </div>
-                        <div className="h-8 w-px bg-slate-200 dark:bg-slate-800" />
-                        <div className="flex flex-wrap gap-1">
-                          {Array.from({ length: onesCount }).map((_, i) => (
-                            <div
-                              key={i}
-                              title="مکعب یکی"
-                              className="w-3.5 h-3.5 rounded-xs bg-sky-500 border border-sky-600"
-                            />
-                          ))}
-                        </div>
+
+                      <div className="flex flex-wrap items-end gap-2.5 p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 min-h-16">
+                        {thousandsCount > 0 && (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {Array.from({ length: thousandsCount }).map((_, i) => (
+                              <div
+                                key={`th-${i}`}
+                                title="مکعب سه‌بعدی هزارتایی (۱۰۰۰)"
+                                className="relative w-10 h-10 rounded-xs bg-violet-600 border border-violet-800 text-[9px] font-mono font-extrabold text-white flex items-center justify-center shadow-[3px_-3px_0_#a78bfa]"
+                              >
+                                {fmt(1000)}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {hundredsCount > 0 && (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {Array.from({ length: hundredsCount }).map((_, i) => (
+                              <div
+                                key={`hu-${i}`}
+                                title="صفحه صدتایی (۱۰۰)"
+                                className="w-9 h-9 rounded-xs bg-emerald-500 border border-emerald-700 text-[9px] font-mono font-extrabold text-white flex items-center justify-center"
+                              >
+                                {fmt(100)}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {tensCount > 0 && (
+                          <div className="flex items-center gap-1">
+                            {Array.from({ length: tensCount }).map((_, i) => (
+                              <div
+                                key={`te-${i}`}
+                                title="میله ده‌تایی (۱۰)"
+                                className="w-2.5 h-10 rounded-xs bg-amber-500 border border-amber-700"
+                              />
+                            ))}
+                          </div>
+                        )}
+                        {onesCount > 0 && (
+                          <div className="flex flex-wrap gap-1 max-w-20">
+                            {Array.from({ length: onesCount }).map((_, i) => (
+                              <div
+                                key={`on-${i}`}
+                                title="مکعب یکی (۱)"
+                                className="w-3 h-3 rounded-xs bg-sky-500 border border-sky-700"
+                              />
+                            ))}
+                          </div>
+                        )}
                       </div>
+
                       <button
                         type="button"
-                        onClick={() =>
+                        data-testid="stamp-place-value-btn"
+                        onClick={() => {
+                          const total =
+                            thousandsCount * 1000 +
+                            hundredsCount * 100 +
+                            tensCount * 10 +
+                            onesCount;
                           handleStamp(
-                            `مکعب ارزش مکانی (${fmt(tensCount)}/${fmt(onesCount)})`,
-                            `${fmt(tensCount)} ده‌تایی و ${fmt(onesCount)} یکی`,
-                            '#d97706'
-                          )
-                        }
+                            `مکعب ارزش مکانی (${fmt(total)})`,
+                            `${fmt(thousandsCount)} هزارتایی، ${fmt(hundredsCount)} صدتایی، ${fmt(tensCount)} ده‌تایی و ${fmt(onesCount)} یکی`,
+                            '#f59e0b',
+                            {
+                              dividerColor: '#0f172a',
+                              placeThousands: thousandsCount,
+                              placeHundreds: hundredsCount,
+                              placeTens: tensCount,
+                              placeOnes: onesCount,
+                              filled: true,
+                            }
+                          );
+                        }}
                         className="w-full py-1.5 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-500 transition-colors"
                       >
                         افزودن شکل مکعب‌ها به تخته سفید

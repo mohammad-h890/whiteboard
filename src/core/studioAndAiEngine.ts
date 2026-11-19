@@ -288,7 +288,15 @@ export const KEYBOARD_SHORTCUTS_CATALOG: KeyboardShortcutSpec[] = [
     categoryLabel: 'ابزارهای قلم و ترسیم',
     keys: ['Ctrl', 'Z'],
     actionTitle: 'بازگشت به مرحله قبل (Undo)',
-    description: 'لغو آخرین خط یا تغییر انجام‌شده روی تخته سفید',
+    description: 'لغو آخرین خط، پاک‌کردن یا ابزارک اضافه‌شده روی تخته سفید (فعال در کیبورد فارسی و انگلیسی)',
+  },
+  {
+    id: 'tool-redo',
+    category: 'tools',
+    categoryLabel: 'ابزارهای قلم و ترسیم',
+    keys: ['Ctrl', 'Y'],
+    actionTitle: 'انجام مجدد (Redo)',
+    description: 'بازگردانی آخرین مرحله بازگشت‌داده‌شده روی تخته (یا Ctrl+Shift+Z)',
   },
   {
     id: 'rec-spotlight',

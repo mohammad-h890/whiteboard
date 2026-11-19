@@ -1512,6 +1512,10 @@ export interface QuickWidgetCatalogItem {
     dividerColor?: string;
     divDividend?: number;
     divDivisor?: number;
+    placeThousands?: number;
+    placeHundreds?: number;
+    placeTens?: number;
+    placeOnes?: number;
     axisMin?: number;
     axisMax?: number;
     axisSubdivisions?: number;
@@ -1583,14 +1587,21 @@ export const QUICK_WIDGET_CATALOG: QuickWidgetCatalogItem[] = [
   },
   {
     id: 'qw-place-value',
-    labelFa: 'مکعب ارزش مکانی (ده‌تایی و یکی)',
+    labelFa: 'مکعب ارزش مکانی (یکی تا هزارتایی)',
     shortLabelFa: 'ارزش مکانی',
     categoryFa: 'ریاضی',
-    keywords: 'مکعب ارزش مکانی ده تایی یکی پایه ده',
-    stampTitle: 'مکعب ارزش مکانی (۳۴)',
-    stampSummary: '۳/۴',
+    keywords: 'مکعب ارزش مکانی هزارتایی صدتایی ده تایی یکی پایه ده 1000 100',
+    stampTitle: 'مکعب ارزش مکانی (۱۲۳۴)',
+    stampSummary: '۱ هزارتایی، ۲ صدتایی، ۳ ده‌تایی و ۴ یکی',
     defaultInnerColor: '#f59e0b',
-    extraProps: { dividerColor: '#0f172a', divDividend: 3, divDivisor: 4, filled: true },
+    extraProps: {
+      dividerColor: '#0f172a',
+      placeThousands: 1,
+      placeHundreds: 2,
+      placeTens: 3,
+      placeOnes: 4,
+      filled: true,
+    },
   },
   {
     id: 'qw-balance-scale',

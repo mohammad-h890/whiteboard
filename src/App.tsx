@@ -392,6 +392,12 @@ export default function App() {
       case 'tool-eraser':
         setActiveTool('eraser-pixel');
         break;
+      case 'tool-undo-redo':
+        setFeatureTrigger({ feature: 'undo', ts: Date.now() });
+        break;
+      case 'tool-redo':
+        setFeatureTrigger({ feature: 'redo', ts: Date.now() });
+        break;
       case 'rec-spotlight':
         setSpotlightActive((s) => !s);
         break;
@@ -1597,13 +1603,11 @@ export default function App() {
           {/* Clear Board Button */}
           <button
             type="button"
+            data-testid="clear-board-page-btn"
             onClick={() => {
               setClearTrigger((c) => c + 1);
-              setStampedWidgets((prev) =>
-                prev.filter((w) => (w.pageIndex ?? 1) !== activeBoardPage)
-              );
             }}
-            title="پاکسازی کامل تخته"
+            title="پاکسازی کامل تخته (قابل بازگشت با Ctrl+Z)"
             aria-label="پاکسازی دستخط تخته"
             className="w-full flex items-center justify-center gap-1.5 py-2 px-1 rounded-lg text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 transition-colors mt-2"
           >

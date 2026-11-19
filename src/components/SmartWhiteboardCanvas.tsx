@@ -67,7 +67,26 @@ import {
   Point2D,
 } from '../core/canvasAndMathEngine';
 import { BareBoardShapeGraphic } from './BareBoardShapeGraphic';
-import { OfflineHandwritingPad } from './OfflineHandwritingPad';
+import { OfflineHandwritingPad, LastAutoReplacedSymbol } from './OfflineHandwritingPad';
+import {
+  HandwritingRecognitionMode,
+  ExpressionScaleAnchor,
+  isLongFractionBarStroke,
+  doesNewStrokeBelongToCurrentSymbol,
+  classifyInstantBoardSymbol,
+  resolveConsistentExpressionScale,
+  recordOfflineHandwritingFeedback,
+  getOfflineHandwritingModelStats,
+  clearOfflineHandwritingLearning,
+} from '../core/handwritingEngine';
+import {
+  BoardHistoryState,
+  createBoardHistory,
+  pushBoardHistory,
+  undoBoardHistory,
+  redoBoardHistory,
+  detectUndoRedoKeyAction,
+} from '../core/historyEngine';
 import { generatePrintableClassNotesHtml } from '../core/studioAndAiEngine';
 import type { ProjectorStrokeItem } from './SecondMonitorProjectorView';
 
@@ -115,6 +134,10 @@ export interface StampedBoardWidget {
   dividerColor?: string;
   divDividend?: number;
   divDivisor?: number;
+  placeThousands?: number;
+  placeHundreds?: number;
+  placeTens?: number;
+  placeOnes?: number;
   hideDivisionSteps?: boolean;
   axisMin?: number;
   axisMax?: number;
@@ -178,8 +201,16 @@ export interface BoardFeatureTrigger {
     | 'flowchart-pad'
     | 'desktop-overlay'
     | 'layers-popover'
-    | 'class-notes-export';
+    | 'class-notes-export'
+    | 'undo'
+    | 'redo';
   ts: number;
+}
+
+interface BoardHistorySnapshot {
+  strokes: StrokePath[];
+  stampedWidgets: StampedBoardWidget[];
+  stickyNodes: StickyNode[];
 }
 
 interface SmartWhiteboardCanvasProps {
@@ -295,7 +326,9 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
   const [imageImportFullscreenMode, setImageImportFullscreenMode] = useState<boolean>(false);
   const [showPdfImportMenu, setShowPdfImportMenu] = useState<boolean>(false);
   const [strokes, setStrokes] = useState<StrokePath[]>(DEFAULT_STROKES);
-  const [redoStack, setRedoStack] = useState<StrokePath[]>([]);
+  const [boardHistory, setBoardHistory] = useState<BoardHistoryState<BoardHistorySnapshot>>(() =>
+    createBoardHistory<BoardHistorySnapshot>(60)
+  );
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(2);
   const [pinnedPages, setPinnedPages] = useState<PinnedBoardPage[]>(() => {
@@ -324,6 +357,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     onCurrentPageChange?.(currentPage);
     setSelectedWidgetId(null);
     setSelectedStrokeIds([]);
+    expressionScaleAnchorRef.current = null;
   }, [currentPage, onCurrentPageChange]);
 
   // Fullscreen & Expandable/Scrollable Board Dimensions
@@ -400,11 +434,69 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
   );
   const [handwritingBeautifierActive, setHandwritingBeautifierActive] =
     useState<boolean>(true);
+  const [handwritingMode, setHandwritingMode] = useState<HandwritingRecognitionMode>('all');
+  const [instantReplaceMode, setInstantReplaceMode] = useState<boolean>(true);
+  const [handwritingConvertDelayMs, setHandwritingConvertDelayMs] = useState<number>(1500);
+  const [lastAutoReplaced, setLastAutoReplaced] = useState<LastAutoReplacedSymbol | null>(null);
+  const [offlineLearningStats, setOfflineLearningStats] = useState(() =>
+    getOfflineHandwritingModelStats()
+  );
   const [liveBoardHandwritingStrokes, setLiveBoardHandwritingStrokes] = useState<Point2D[][]>(
     []
   );
+  const liveBoardHandwritingStrokesRef = useRef<Point2D[][]>([]);
+  const autoCommitHandwritingTimerRef = useRef<number | null>(null);
+  const expressionScaleAnchorRef = useRef<ExpressionScaleAnchor | null>(null);
   const isOnBoardHandwritingActive =
     showHandwritingPad && handwritingPadTab === 'handwriting';
+
+  // Refs synced with board state for atomic Undo/Redo snapshots & timer callbacks
+  const strokesRef = useRef<StrokePath[]>(strokes);
+  strokesRef.current = strokes;
+  const stampedWidgetsRef = useRef<StampedBoardWidget[]>(stampedWidgets);
+  stampedWidgetsRef.current = stampedWidgets;
+  const stickyNodesRef = useRef<StickyNode[]>(stickyNodes);
+  stickyNodesRef.current = stickyNodes;
+  const boardHistoryRef = useRef<BoardHistoryState<BoardHistorySnapshot>>(boardHistory);
+  boardHistoryRef.current = boardHistory;
+  const internalWidgetChangeRef = useRef<boolean>(false);
+  const prevWidgetsSnapshotRef = useRef<StampedBoardWidget[]>(stampedWidgets);
+
+  const setLiveBoardStrokesSynced = (
+    updater: Point2D[][] | ((prev: Point2D[][]) => Point2D[][])
+  ) => {
+    const next =
+      typeof updater === 'function'
+        ? updater(liveBoardHandwritingStrokesRef.current)
+        : updater;
+    liveBoardHandwritingStrokesRef.current = next;
+    setLiveBoardHandwritingStrokes(next);
+  };
+
+  const clearPendingAutoCommitTimer = () => {
+    if (autoCommitHandwritingTimerRef.current !== null) {
+      window.clearTimeout(autoCommitHandwritingTimerRef.current);
+      autoCommitHandwritingTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => clearPendingAutoCommitTimer();
+  }, []);
+
+  const recordHistorySnapshot = (markInternalWidgetMutation = false) => {
+    if (markInternalWidgetMutation) {
+      internalWidgetChangeRef.current = true;
+    }
+    const snap: BoardHistorySnapshot = {
+      strokes: strokesRef.current,
+      stampedWidgets: stampedWidgetsRef.current,
+      stickyNodes: stickyNodesRef.current,
+    };
+    const nextHist = pushBoardHistory(boardHistoryRef.current, snap);
+    boardHistoryRef.current = nextHist;
+    setBoardHistory(nextHist);
+  };
 
   // Class Notes PDF Handout Preview & Export Modal State
   const [showClassNotesModal, setShowClassNotesModal] = useState<boolean>(false);
@@ -531,18 +623,37 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
       case 'class-notes-export':
         setShowClassNotesModal(true);
         break;
+      case 'undo':
+        handleUndo();
+        break;
+      case 'redo':
+        handleRedo();
+        break;
     }
   }, [featureTrigger]);
 
   useEffect(() => {
     if (clearTrigger > 0 && clearTrigger !== lastClearTriggerRef.current) {
       lastClearTriggerRef.current = clearTrigger;
+      const hasAnythingOnPage =
+        strokesRef.current.some((s) => s.pageIndex === currentPage) ||
+        stampedWidgetsRef.current.some((w) => (w.pageIndex ?? 1) === currentPage) ||
+        stickyNodesRef.current.some((n) => (n.pageIndex ?? 1) === currentPage);
+      if (hasAnythingOnPage) {
+        recordHistorySnapshot(true);
+      }
+      clearPendingAutoCommitTimer();
       setStrokes((prev) => prev.filter((s) => s.pageIndex !== currentPage));
+      onUpdateStampedWidgets?.((prev) =>
+        prev.filter((w) => (w.pageIndex ?? 1) !== currentPage)
+      );
       setStickyNodes((prev) => prev.filter((n) => (n.pageIndex ?? 1) !== currentPage));
       setShowDynamicTable(false);
       setSelectedWidgetId(null);
       setSelectedStrokeIds([]);
-      setLiveBoardHandwritingStrokes([]);
+      setLiveBoardStrokesSynced([]);
+      setLastAutoReplaced(null);
+      expressionScaleAnchorRef.current = null;
       setBoardPdfSheet(null);
     }
   }, [clearTrigger, currentPage]);
@@ -636,17 +747,37 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     [pageWidgets, selectedWidgetId]
   );
 
-  // Automatically select newly stamped widget on the current page so its edit panel opens immediately
+  // Automatically select newly stamped widget on the current page (except instant in-place handwriting widgets)
+  // and capture external widget additions (from right dock / subject labs) into Ctrl+Z Undo history.
   const prevWidgetsCountRef = useRef<number>(stampedWidgets.length);
   useEffect(() => {
+    const prevSnapshot = prevWidgetsSnapshotRef.current;
+    if (internalWidgetChangeRef.current) {
+      internalWidgetChangeRef.current = false;
+    } else if (stampedWidgets.length !== prevSnapshot.length) {
+      const snap: BoardHistorySnapshot = {
+        strokes: strokesRef.current,
+        stampedWidgets: prevSnapshot,
+        stickyNodes: stickyNodesRef.current,
+      };
+      const nextHist = pushBoardHistory(boardHistoryRef.current, snap);
+      boardHistoryRef.current = nextHist;
+      setBoardHistory(nextHist);
+    }
+    prevWidgetsSnapshotRef.current = stampedWidgets;
+
     if (stampedWidgets.length > prevWidgetsCountRef.current) {
       const newest = stampedWidgets[stampedWidgets.length - 1];
-      if (newest && (newest.pageIndex ?? 1) === currentPage) {
+      if (
+        newest &&
+        (newest.pageIndex ?? 1) === currentPage &&
+        !newest.id.startsWith('hw-auto-')
+      ) {
         setSelectedWidgetId(newest.id);
       }
     }
     prevWidgetsCountRef.current = stampedWidgets.length;
-  }, [stampedWidgets.length, currentPage]);
+  }, [stampedWidgets, currentPage]);
 
   const updateWidgetProps = (id: string, patch: Partial<StampedBoardWidget>) => {
     if (!onUpdateStampedWidgets) return;
@@ -678,6 +809,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
       dashed: false,
       strokeWidthPx: 3,
     };
+    recordHistorySnapshot(true);
     onUpdateStampedWidgets((prev) => [...prev, newWidget]);
     setSelectedWidgetId(newId);
     if (!numberMiniMenuPinned) {
@@ -716,6 +848,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
       dashed: false,
       strokeWidthPx: 3,
     };
+    recordHistorySnapshot(true);
     onUpdateStampedWidgets((prev) => [...prev, newWidget]);
     setSelectedWidgetId(newId);
     setShowShapesPalette(false);
@@ -753,6 +886,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
       dashed: false,
       strokeWidthPx: strokeWidth,
     };
+    recordHistorySnapshot(true);
     onUpdateStampedWidgets((prev) => [...prev, newWidget]);
     setSelectedWidgetId(newId);
     setShowShapesPalette(false);
@@ -760,6 +894,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
 
   const scaleSelectedStrokesOnBoard = (scaleFactor: number) => {
     if (selectedStrokeIds.length === 0) return;
+    recordHistorySnapshot();
     const selSet = new Set(selectedStrokeIds);
     setStrokes((prev) => {
       const targetStrokes = prev.filter((s) => selSet.has(s.id));
@@ -848,29 +983,52 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
         return;
       }
 
+      // 0. Unified Ctrl+Z / Cmd+Z (Undo) & Ctrl+Y / Ctrl+Shift+Z (Redo) — works on both EN & Persian keyboards
+      const undoRedoAction = detectUndoRedoKeyAction({
+        key: e.key,
+        code: e.code,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+      });
+      if (undoRedoAction === 'undo') {
+        e.preventDefault();
+        handleUndo();
+        return;
+      }
+      if (undoRedoAction === 'redo') {
+        e.preventDefault();
+        handleRedo();
+        return;
+      }
+
       // 1. Delete / Backspace -> Delete selected widget, selected shape/strokes, or live board handwriting strokes
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selectedWidgetId) {
           e.preventDefault();
           const title = selectedWidget?.title ?? 'ابزارک';
+          recordHistorySnapshot(true);
           onRemoveStampedWidget(selectedWidgetId);
           setSelectedWidgetId(null);
-          setLastSnapNotice(`«${title}» با دکمه کیبورد حذف شد`);
+          setLastSnapNotice(`«${title}» با دکمه کیبورد حذف شد (قابل بازگشت با Ctrl+Z)`);
           window.setTimeout(() => setLastSnapNotice(null), 1800);
           return;
         }
         if (selectedStrokeIds.length > 0) {
           e.preventDefault();
           const selSet = new Set(selectedStrokeIds);
+          recordHistorySnapshot();
           setStrokes((prev) => prev.filter((s) => !selSet.has(s.id)));
           setSelectedStrokeIds([]);
-          setLastSnapNotice('شکل ترسیمی انتخاب‌شده با دکمه کیبورد حذف شد');
+          setLastSnapNotice('شکل ترسیمی انتخاب‌شده با دکمه کیبورد حذف شد (قابل بازگشت با Ctrl+Z)');
           window.setTimeout(() => setLastSnapNotice(null), 1800);
           return;
         }
-        if (isOnBoardHandwritingActive && liveBoardHandwritingStrokes.length > 0) {
+        if (isOnBoardHandwritingActive && liveBoardHandwritingStrokesRef.current.length > 0) {
           e.preventDefault();
-          setLiveBoardHandwritingStrokes((prev) => prev.slice(0, -1));
+          clearPendingAutoCommitTimer();
+          setLiveBoardStrokesSynced((prev) => prev.slice(0, -1));
           return;
         }
       }
@@ -1229,8 +1387,9 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     regularStrokes.forEach((s) => drawPathOnCtx(ctx, s));
 
     // Render live on-board handwriting strokes (when Offline Handwriting Mode is ON)
-    if (liveBoardHandwritingStrokes.length > 0) {
-      const hwBox = getStrokesBoundingBox(liveBoardHandwritingStrokes);
+    const activeHwStrokes = liveBoardHandwritingStrokesRef.current;
+    if (activeHwStrokes.length > 0) {
+      const hwBox = getStrokesBoundingBox(activeHwStrokes);
       if (hwBox) {
         ctx.save();
         ctx.strokeStyle = 'rgba(2, 132, 199, 0.45)';
@@ -1250,7 +1409,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
         ctx.restore();
       }
 
-      liveBoardHandwritingStrokes.forEach((hwPts, idx) => {
+      activeHwStrokes.forEach((hwPts, idx) => {
         if (hwPts.length === 0) return;
         if (hwPts.length === 1) {
           ctx.save();
@@ -1320,27 +1479,186 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     redrawCanvas();
   }, [redrawCanvas]);
 
-  const handleUndo = () => {
-    setStrokes((prev) => {
-      const idx = [...prev].reverse().findIndex((s) => s.pageIndex === currentPage);
-      if (idx === -1) return prev;
-      const actualIdx = prev.length - 1 - idx;
-      const removed = prev[actualIdx];
-      setRedoStack((r) => [...r, removed]);
-      return prev.filter((_, i) => i !== actualIdx);
+  const commitBoardHandwritingInPlace = (strokesToCommit: Point2D[][]) => {
+    clearPendingAutoCommitTimer();
+    if (strokesToCommit.length === 0) return;
+
+    const result = classifyInstantBoardSymbol(strokesToCommit, handwritingMode);
+    setLiveBoardStrokesSynced([]);
+    redrawCanvas();
+    if (!result) return;
+
+    const nowTs = Date.now();
+    if (result.kind === 'fraction-bar' && result.lineStart && result.lineEnd) {
+      const barId = `hw-auto-bar-${nowTs}-${Math.random().toString(36).slice(2, 6)}`;
+      const barStroke: StrokePath = {
+        id: barId,
+        pageIndex: currentPage,
+        layerId: activeLayerId,
+        tool: 'fountain',
+        color: strokeColor,
+        width: Math.max(4, strokeWidth),
+        points: [result.lineStart, result.lineEnd],
+        createdAt: nowTs,
+        shapeLabel: 'خط کسر',
+      };
+      // Keep the numerator's expression scale anchor alive across the fraction bar so the denominator matches the numerator's exact size!
+      if (expressionScaleAnchorRef.current) {
+        expressionScaleAnchorRef.current = {
+          ...expressionScaleAnchorRef.current,
+          lastBox: result.box,
+          lastCommitTs: nowTs,
+        };
+      }
+      recordHistorySnapshot();
+      setStrokes((prev) => [...prev, barStroke]);
+      setLastAutoReplaced({
+        strokeId: barId,
+        text: '───',
+        candidates: result.candidates,
+        sourceStrokes: strokesToCommit.map((st) => [...st]),
+        box: result.box,
+      });
+      setLastSnapNotice('خط کسر صاف جایگزین شد');
+      window.setTimeout(() => setLastSnapNotice(null), 1500);
+      return;
+    }
+
+    if (!onUpdateStampedWidgets) return;
+    const { scale: uniformScale, nextAnchor } = resolveConsistentExpressionScale(
+      result.suggestedScale,
+      result.box,
+      expressionScaleAnchorRef.current,
+      nowTs
+    );
+    expressionScaleAnchorRef.current = nextAnchor;
+
+    const container = boardContainerRef.current;
+    const canvas = canvasRef.current;
+    let targetX = result.box.cx;
+    let targetY = result.box.cy;
+    if (container && canvas) {
+      const rect = container.getBoundingClientRect();
+      const scaleX = rect.width / Math.max(1, canvas.width);
+      const scaleY = rect.height / Math.max(1, canvas.height);
+      const relCx = result.box.cx * scaleX;
+      const relCy = result.box.cy * scaleY;
+      const charCount = [...result.text].length;
+      const halfWidthPx = (charCount <= 1 ? 26 : charCount * 17 + 10) * uniformScale;
+      const halfHeightPx = 32 * uniformScale;
+      targetX = Math.max(
+        12,
+        Math.min(rect.width - Math.max(72, halfWidthPx * 2), relCx - halfWidthPx)
+      );
+      targetY = Math.max(
+        40,
+        Math.min(rect.height - 72, relCy - halfHeightPx)
+      );
+    }
+
+    const newId = `hw-auto-${nowTs}-${Math.random().toString(36).slice(2, 6)}`;
+    const newWidget: StampedBoardWidget = {
+      id: newId,
+      pageIndex: currentPage,
+      title: result.isEnglishDigit
+        ? `عدد انگلیسی (${result.text})`
+        : `دست‌نویس (${result.text})`,
+      summary: result.text,
+      badgeColor: strokeColor,
+      dividerColor: '#0f172a',
+      x: targetX,
+      y: targetY,
+      widgetKind: 'persian-number',
+      persianText: result.text,
+      scale: uniformScale,
+      rotationDeg: 0,
+      filled: true,
+      dashed: false,
+      strokeWidthPx: 3,
+    };
+
+    recordHistorySnapshot(true);
+    onUpdateStampedWidgets((prev) => [...prev, newWidget]);
+    setLastAutoReplaced({
+      widgetId: newId,
+      text: result.text,
+      candidates: result.candidates,
+      sourceStrokes: strokesToCommit.map((st) => [...st]),
+      box: result.box,
     });
+  };
+
+  const canUndo =
+    boardHistory.past.length > 0 ||
+    (isOnBoardHandwritingActive && liveBoardHandwritingStrokes.length > 0);
+  const canRedo = boardHistory.future.length > 0;
+
+  const handleUndo = () => {
+    clearPendingAutoCommitTimer();
+    if (isOnBoardHandwritingActive && liveBoardHandwritingStrokesRef.current.length > 0) {
+      setLiveBoardStrokesSynced((prev) => prev.slice(0, -1));
+      setLastSnapNotice('واگرد آخرین خط دست‌نویس (Ctrl+Z)');
+      window.setTimeout(() => setLastSnapNotice(null), 1500);
+      return;
+    }
+    const currentSnap: BoardHistorySnapshot = {
+      strokes: strokesRef.current,
+      stampedWidgets: stampedWidgetsRef.current,
+      stickyNodes: stickyNodesRef.current,
+    };
+    const { nextHistory, restored } = undoBoardHistory(boardHistoryRef.current, currentSnap);
+    if (!restored) return;
+
+    boardHistoryRef.current = nextHistory;
+    setBoardHistory(nextHistory);
+    internalWidgetChangeRef.current = true;
+    setStrokes(restored.strokes);
+    onUpdateStampedWidgets?.(restored.stampedWidgets);
+    setStickyNodes(restored.stickyNodes);
+    setSelectedStrokeIds([]);
+    if (
+      selectedWidgetId &&
+      !restored.stampedWidgets.some((w) => w.id === selectedWidgetId)
+    ) {
+      setSelectedWidgetId(null);
+    }
+    setLastAutoReplaced((prev) => {
+      if (!prev) return null;
+      if (prev.widgetId && !restored.stampedWidgets.some((w) => w.id === prev.widgetId)) {
+        return null;
+      }
+      if (prev.strokeId && !restored.strokes.some((s) => s.id === prev.strokeId)) {
+        return null;
+      }
+      return prev;
+    });
+    setLastSnapNotice('بازگشت به مرحله قبل (Ctrl+Z)');
+    window.setTimeout(() => setLastSnapNotice(null), 1600);
   };
 
   const handleRedo = () => {
-    setRedoStack((prev) => {
-      if (prev.length === 0) return prev;
-      const last = prev[prev.length - 1];
-      setStrokes((s) => [...s, last]);
-      return prev.slice(0, -1);
-    });
+    clearPendingAutoCommitTimer();
+    const currentSnap: BoardHistorySnapshot = {
+      strokes: strokesRef.current,
+      stampedWidgets: stampedWidgetsRef.current,
+      stickyNodes: stickyNodesRef.current,
+    };
+    const { nextHistory, restored } = redoBoardHistory(boardHistoryRef.current, currentSnap);
+    if (!restored) return;
+
+    boardHistoryRef.current = nextHistory;
+    setBoardHistory(nextHistory);
+    internalWidgetChangeRef.current = true;
+    setStrokes(restored.strokes);
+    onUpdateStampedWidgets?.(restored.stampedWidgets);
+    setStickyNodes(restored.stickyNodes);
+    setSelectedStrokeIds([]);
+    setLastSnapNotice('انجام مجدد (Ctrl+Y)');
+    window.setTimeout(() => setLastSnapNotice(null), 1600);
   };
 
   const handleAddConnectedStickyPair = () => {
+    recordHistorySnapshot();
     const id1 = `sticky-${Date.now()}-1`;
     const id2 = `sticky-${Date.now()}-2`;
     setStickyNodes((prev) => [
@@ -1606,6 +1924,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     // 1. Fill-Bucket Tool (سطل رنگ): Color any clicked Smart Widget OR any clicked Drawn Shape
     if (activeTool === 'fill-bucket') {
       if (hitWidget) {
+        recordHistorySnapshot(true);
         updateWidgetProps(hitWidget.id, { badgeColor: strokeColor, filled: true });
         setSelectedWidgetId(hitWidget.id);
         setLastSnapNotice(`داخل «${hitWidget.title}» با سطل رنگ رنگ‌آمیزی شد`);
@@ -1614,6 +1933,11 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
       }
 
       let matchedStroke = false;
+      const snapshotBeforeFill = {
+        strokes: strokesRef.current,
+        stampedWidgets: stampedWidgetsRef.current,
+        stickyNodes: stickyNodesRef.current,
+      };
       setStrokes((prev) => {
         const next = [...prev];
         for (let i = next.length - 1; i >= 0; i--) {
@@ -1644,16 +1968,21 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
       });
 
       if (matchedStroke) {
+        const nextHist = pushBoardHistory(boardHistoryRef.current, snapshotBeforeFill);
+        boardHistoryRef.current = nextHist;
+        setBoardHistory(nextHist);
         setLastSnapNotice('داخل شکل ترسیم‌شده با سطل رنگ رنگ‌آمیزی شد');
         window.setTimeout(() => setLastSnapNotice(null), 2200);
         return;
       }
 
       if (selectedWidgetId) {
+        recordHistorySnapshot(true);
         updateWidgetProps(selectedWidgetId, { badgeColor: strokeColor, filled: true });
         return;
       }
       if (pageStrokes.length > 0) {
+        recordHistorySnapshot();
         const lastStrokeId = pageStrokes[pageStrokes.length - 1].id;
         setStrokes((prev) =>
           prev.map((s) => (s.id === lastStrokeId ? { ...s, fillColor: strokeColor } : s))
@@ -1661,6 +1990,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
         return;
       }
       if (pageWidgets.length > 0) {
+        recordHistorySnapshot(true);
         const lastW = pageWidgets[pageWidgets.length - 1];
         updateWidgetProps(lastW.id, { badgeColor: strokeColor, filled: true });
         setSelectedWidgetId(lastW.id);
@@ -1678,6 +2008,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
       pt.y >= selectedStrokesBox.minY - 18 &&
       pt.y <= selectedStrokesBox.maxY + 18
     ) {
+      recordHistorySnapshot();
       e.currentTarget.setPointerCapture?.(e.pointerId);
       setDraggingSelectedStrokes({ lastX: pt.x, lastY: pt.y });
       return;
@@ -1688,6 +2019,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
       for (let i = pageStrokes.length - 1; i >= 0; i--) {
         const s = pageStrokes[i];
         if (isStrokeHitByEraser(s.points, pt, 16 + s.width)) {
+          recordHistorySnapshot();
           e.currentTarget.setPointerCapture?.(e.pointerId);
           setSelectedStrokeIds([s.id]);
           setSelectedWidgetId(null);
@@ -1703,6 +2035,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
       !isEraserActive &&
       (activeTool === 'lasso' || (moveSelectedWithMouse && hitWidget.id === selectedWidgetId))
     ) {
+      recordHistorySnapshot(true);
       setSelectedWidgetId(hitWidget.id);
       setSelectedStrokeIds([]);
       setDraggingWidgetId(hitWidget.id);
@@ -1711,6 +2044,23 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
 
     const activeLayer = layers.find((l) => l.id === activeLayerId);
     if (!activeLayer || activeLayer.locked || !activeLayer.visible) return;
+
+    // 4. Instant Per-Symbol Handwriting Spatial Separation Trigger (0ms):
+    // When starting a new stroke outside the current symbol's neighborhood, replace the previous symbol in-place immediately!
+    if (
+      isOnBoardHandwritingActive &&
+      instantReplaceMode &&
+      activeTool !== 'lasso' &&
+      !isEraserActive
+    ) {
+      clearPendingAutoCommitTimer();
+      if (
+        liveBoardHandwritingStrokesRef.current.length > 0 &&
+        !doesNewStrokeBelongToCurrentSymbol(liveBoardHandwritingStrokesRef.current, pt)
+      ) {
+        commitBoardHandwritingInPlace(liveBoardHandwritingStrokesRef.current);
+      }
+    }
 
     try {
       e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -1721,6 +2071,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     setIsActivelyDrawing(true);
 
     if (isEraserActive) {
+      recordHistorySnapshot(true);
       isDrawingRef.current = true;
       currentPointsRef.current = [pt];
       applyEraserAlongSegment(pt, pt);
@@ -1899,6 +2250,9 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
   };
 
   const handlePointerUp = () => {
+    const wasDrawing = isDrawingRef.current;
+    isDrawingRef.current = false;
+
     if (activeDrawingPointerIdRef.current !== null) {
       const pid = activeDrawingPointerIdRef.current;
       activeDrawingPointerIdRef.current = null;
@@ -1943,8 +2297,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
       }
     }
 
-    if (!isDrawingRef.current) return;
-    isDrawingRef.current = false;
+    if (!wasDrawing) return;
     if (isEraserActive) {
       currentPointsRef.current = [];
       return;
@@ -1952,10 +2305,26 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     let pts = [...currentPointsRef.current];
     currentPointsRef.current = [];
 
-    // When On-Board Offline Handwriting Mode is ON, capture strokes (including single-point dots!) for live corner box recognition
+    // When On-Board Offline Handwriting Mode is ON, capture strokes (including single-point dots!)
+    // and in Instant Replace Mode auto-commit each symbol in-place (0ms fraction bar snap / 650ms idle commit)
     if (isOnBoardHandwritingActive && activeTool !== 'lasso' && activeTool !== 'fill-bucket') {
       if (pts.length >= 1) {
-        setLiveBoardHandwritingStrokes((prev) => [...prev, pts]);
+        const nextStrokes = [...liveBoardHandwritingStrokesRef.current, pts];
+        if (instantReplaceMode) {
+          if (nextStrokes.length === 1 && isLongFractionBarStroke(nextStrokes[0])) {
+            commitBoardHandwritingInPlace(nextStrokes);
+          } else {
+            setLiveBoardStrokesSynced(nextStrokes);
+            clearPendingAutoCommitTimer();
+            autoCommitHandwritingTimerRef.current = window.setTimeout(() => {
+              if (!isDrawingRef.current && liveBoardHandwritingStrokesRef.current.length > 0) {
+                commitBoardHandwritingInPlace(liveBoardHandwritingStrokesRef.current);
+              }
+            }, handwritingConvertDelayMs);
+          }
+        } else {
+          setLiveBoardStrokesSynced(nextStrokes);
+        }
       }
       redrawCanvas();
       return;
@@ -2125,8 +2494,8 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
       isVanishing: activeTool === 'laser-vanish',
       shapeLabel: recognizedLabel,
     };
+    recordHistorySnapshot();
     setStrokes((prev) => [...prev, newStroke]);
-    setRedoStack([]);
     if (recognizedLabel) {
       setLastSnapNotice(`${recognizedLabel} رسم شد — برای باز کردن منوی ویرایش روی شکل دابل‌کلیک کنید`);
       window.setTimeout(() => setLastSnapNotice(null), 2200);
@@ -2494,21 +2863,30 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
           <div className="sticky top-2.5 left-2.5 mx-2.5 mt-2 flex flex-wrap items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-sm z-30 text-xs w-fit">
             <button
               type="button"
+              data-testid="board-undo-btn"
               onClick={handleUndo}
-              disabled={pageStrokes.length === 0}
-              aria-label="بازگشت به عقب (Undo)"
-              title="بازگشت به عقب (Undo)"
-              className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-35 text-slate-700 dark:text-slate-300"
+              disabled={!canUndo}
+              aria-label="بازگشت به عقب (Ctrl+Z)"
+              title="بازگشت به مرحله قبل (Ctrl+Z)"
+              className="px-1.5 py-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-35 text-slate-700 dark:text-slate-200 flex items-center gap-1 transition-colors"
             >
               <Undo2 className="w-3.5 h-3.5" />
+              <span className="text-[11px] font-bold hidden sm:inline">بازگشت</span>
+              <kbd
+                dir="ltr"
+                className="px-1 py-0.25 rounded bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-[9.5px] font-bold text-slate-600 dark:text-slate-300"
+              >
+                Ctrl+Z
+              </kbd>
             </button>
             <button
               type="button"
+              data-testid="board-redo-btn"
               onClick={handleRedo}
-              disabled={redoStack.length === 0}
-              aria-label="انجام مجدد (Redo)"
-              title="انجام مجدد (Redo)"
-              className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-35 text-slate-700 dark:text-slate-300"
+              disabled={!canRedo}
+              aria-label="انجام مجدد (Ctrl+Y)"
+              title="انجام مجدد (Ctrl+Y / Ctrl+Shift+Z)"
+              className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-35 text-slate-700 dark:text-slate-300 transition-colors"
             >
               <Redo2 className="w-3.5 h-3.5" />
             </button>
@@ -3567,6 +3945,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                   type="button"
                   data-testid="delete-selected-strokes-btn"
                   onClick={() => {
+                    recordHistorySnapshot();
                     const selSet = new Set(selectedStrokeIds);
                     setStrokes((prev) => prev.filter((s) => !selSet.has(s.id)));
                     setSelectedStrokeIds([]);
@@ -3630,24 +4009,115 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
               <OfflineHandwritingPad
                 isOpen={showHandwritingPad}
                 onClose={() => {
+                  clearPendingAutoCommitTimer();
                   setShowHandwritingPad(false);
-                  setLiveBoardHandwritingStrokes([]);
+                  setLiveBoardStrokesSynced([]);
+                  setLastAutoReplaced(null);
+                  expressionScaleAnchorRef.current = null;
                 }}
                 strokeColor={strokeColor}
                 usePersianNumerals={usePersianNumerals}
                 initialTab={handwritingPadTab}
+                mode={handwritingMode}
+                onChangeMode={setHandwritingMode}
+                instantReplaceMode={instantReplaceMode}
+                onToggleInstantReplaceMode={() => {
+                  clearPendingAutoCommitTimer();
+                  setInstantReplaceMode((v) => !v);
+                }}
+                convertDelayMs={handwritingConvertDelayMs}
+                onChangeConvertDelayMs={setHandwritingConvertDelayMs}
+                lastAutoReplaced={lastAutoReplaced}
+                offlineLearningStats={offlineLearningStats}
+                onResetOfflineLearning={() => {
+                  clearOfflineHandwritingLearning();
+                  setOfflineLearningStats(getOfflineHandwritingModelStats());
+                  setLastSnapNotice('حافظه یادگیری آفلاین بازنشانی شد');
+                  window.setTimeout(() => setLastSnapNotice(null), 1800);
+                }}
+                onReplaceLastAutoItem={(newText) => {
+                  const cleaned = newText.trim();
+                  if (!cleaned || !lastAutoReplaced || !onUpdateStampedWidgets) return;
+                  recordHistorySnapshot(true);
+                  const isEn = /^[0-9]+$/.test(cleaned);
+
+                  if (lastAutoReplaced.widgetId) {
+                    updateWidgetProps(lastAutoReplaced.widgetId, {
+                      persianText: cleaned,
+                      summary: cleaned,
+                      title: isEn ? `عدد انگلیسی (${cleaned})` : `دست‌نویس (${cleaned})`,
+                    });
+                    setLastAutoReplaced((prev) => (prev ? { ...prev, text: cleaned } : null));
+                  } else if (lastAutoReplaced.strokeId && cleaned !== '───') {
+                    // Convert a mistakenly snapped fraction bar into the user's corrected text widget at the exact same spot
+                    const removeStrokeId = lastAutoReplaced.strokeId;
+                    setStrokes((prev) => prev.filter((s) => s.id !== removeStrokeId));
+
+                    const container = boardContainerRef.current;
+                    const canvas = canvasRef.current;
+                    let targetX = 160;
+                    let targetY = 160;
+                    if (container && canvas && lastAutoReplaced.box) {
+                      const rect = container.getBoundingClientRect();
+                      const scaleX = rect.width / Math.max(1, canvas.width);
+                      const scaleY = rect.height / Math.max(1, canvas.height);
+                      targetX = Math.max(12, Math.min(rect.width - 90, lastAutoReplaced.box.cx * scaleX - 30));
+                      targetY = Math.max(40, Math.min(rect.height - 72, lastAutoReplaced.box.cy * scaleY - 30));
+                    }
+                    const convertedId = `hw-auto-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+                    const convertedWidget: StampedBoardWidget = {
+                      id: convertedId,
+                      pageIndex: currentPage,
+                      title: isEn ? `عدد انگلیسی (${cleaned})` : `دست‌نویس (${cleaned})`,
+                      summary: cleaned,
+                      badgeColor: strokeColor,
+                      dividerColor: '#0f172a',
+                      x: targetX,
+                      y: targetY,
+                      widgetKind: 'persian-number',
+                      persianText: cleaned,
+                      scale: expressionScaleAnchorRef.current?.scale ?? 1,
+                      rotationDeg: 0,
+                      filled: true,
+                      dashed: false,
+                      strokeWidthPx: 3,
+                    };
+                    onUpdateStampedWidgets((prev) => [...prev, convertedWidget]);
+                    setLastAutoReplaced((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            widgetId: convertedId,
+                            strokeId: undefined,
+                            text: cleaned,
+                          }
+                        : null
+                    );
+                  }
+
+                  if (lastAutoReplaced.sourceStrokes && lastAutoReplaced.sourceStrokes.length > 0) {
+                    recordOfflineHandwritingFeedback(lastAutoReplaced.sourceStrokes, cleaned);
+                    setOfflineLearningStats(getOfflineHandwritingModelStats());
+                  }
+                }}
+                onUndoLastAutoItem={handleUndo}
                 beautifierActive={handwritingBeautifierActive}
                 onToggleBeautifier={() => setHandwritingBeautifierActive((b) => !b)}
                 boardStrokes={liveBoardHandwritingStrokes}
-                onClearBoardStrokes={() => setLiveBoardHandwritingStrokes([])}
-                onUndoLastBoardStroke={() =>
-                  setLiveBoardHandwritingStrokes((prev) => prev.slice(0, -1))
-                }
+                onClearBoardStrokes={() => {
+                  clearPendingAutoCommitTimer();
+                  setLiveBoardStrokesSynced([]);
+                }}
+                onUndoLastBoardStroke={() => {
+                  clearPendingAutoCommitTimer();
+                  setLiveBoardStrokesSynced((prev) => prev.slice(0, -1));
+                }}
                 onStampRecognizedText={(txt, kind) => {
+                  clearPendingAutoCommitTimer();
                   let targetX: number | undefined;
                   let targetY: number | undefined;
-                  if (liveBoardHandwritingStrokes.length > 0) {
-                    const hwBox = getStrokesBoundingBox(liveBoardHandwritingStrokes);
+                  if (liveBoardHandwritingStrokesRef.current.length > 0) {
+                    const hwBox = getStrokesBoundingBox(liveBoardHandwritingStrokesRef.current);
                     const container = boardContainerRef.current;
                     const canvas = canvasRef.current;
                     if (hwBox && container && canvas) {
@@ -3669,11 +4139,12 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                   } else {
                     addPersianNumberToBoard(txt, targetX, targetY);
                   }
-                  setLiveBoardHandwritingStrokes([]);
+                  setLiveBoardStrokesSynced([]);
                   setLastSnapNotice(`متن «${txt}» روی صفحه وایت‌برد وارد شد`);
                   window.setTimeout(() => setLastSnapNotice(null), 2400);
                 }}
                 onStampBeautifiedStrokes={(hwStrokes) => {
+                  clearPendingAutoCommitTimer();
                   const newPaths: StrokePath[] = hwStrokes.map((st, idx) => ({
                     id: `hw-stroke-${Date.now()}-${idx}`,
                     pageIndex: currentPage,
@@ -3682,13 +4153,14 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                     color: strokeColor,
                     width: strokeWidth,
                     points:
-                      liveBoardHandwritingStrokes.length > 0
+                      liveBoardHandwritingStrokesRef.current.length > 0
                         ? st
                         : st.map((p) => ({ x: p.x + 220, y: p.y + 180 })),
                     createdAt: Date.now(),
                   }));
+                  recordHistorySnapshot();
                   setStrokes((prev) => [...prev, ...newPaths]);
-                  setLiveBoardHandwritingStrokes([]);
+                  setLiveBoardStrokesSynced([]);
                   setLastSnapNotice('دستخط صاف‌شده روی صفحه وایت‌برد قرار گرفت');
                   window.setTimeout(() => setLastSnapNotice(null), 2200);
                 }}
@@ -3709,6 +4181,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                   for (let i = 0; i < baseNodes.length - 1; i++) {
                     baseNodes[i].connectedToId = baseNodes[i + 1].id;
                   }
+                  recordHistorySnapshot();
                   setStickyNodes((prev) => [...prev, ...baseNodes]);
                   setShowHandwritingPad(false);
                   setLastSnapNotice(`${title} روی تخته سفید ترسیم شد`);
@@ -4534,6 +5007,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                     type="button"
                     data-testid="delete-selected-widget-btn"
                     onClick={() => {
+                      recordHistorySnapshot(true);
                       onRemoveStampedWidget(selectedWidget.id);
                       setSelectedWidgetId(null);
                     }}
@@ -4671,6 +5145,88 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                       className="w-full px-2 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold text-center"
                     />
                   </label>
+                </div>
+              )}
+
+              {(selectedWidget.title.includes('ارزش مکانی') ||
+                selectedWidget.title.includes('مکعب ارزش مکانی')) && (
+                <div className="space-y-1.5 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-bold text-slate-600 dark:text-slate-300">
+                      عدد (۰ تا ۹۹۹۹):
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={9999}
+                      value={
+                        (selectedWidget.placeThousands ?? 0) * 1000 +
+                        (selectedWidget.placeHundreds ?? 0) * 100 +
+                        (selectedWidget.placeTens ?? 0) * 10 +
+                        (selectedWidget.placeOnes ?? 0)
+                      }
+                      onChange={(e) => {
+                        const v = Math.max(0, Math.min(9999, Math.floor(Number(e.target.value) || 0)));
+                        const th = Math.floor(v / 1000);
+                        const hu = Math.floor((v % 1000) / 100);
+                        const te = Math.floor((v % 100) / 10);
+                        const on = v % 10;
+                        updateWidgetProps(selectedWidget.id, {
+                          title: `مکعب ارزش مکانی (${fmt(v)})`,
+                          placeThousands: th,
+                          placeHundreds: hu,
+                          placeTens: te,
+                          placeOnes: on,
+                        });
+                      }}
+                      className="w-24 px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold text-center"
+                    />
+                  </div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {(
+                      [
+                        { key: 'placeThousands', label: 'هزار', max: 9 },
+                        { key: 'placeHundreds', label: 'صد', max: 9 },
+                        { key: 'placeTens', label: 'ده', max: 19 },
+                        { key: 'placeOnes', label: 'یکی', max: 20 },
+                      ] as const
+                    ).map((f) => (
+                      <label key={f.key} className="block">
+                        <span className="text-[9.5px] text-slate-500 block text-center">
+                          {f.label}
+                        </span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={f.max}
+                          value={selectedWidget[f.key] ?? 0}
+                          onChange={(e) => {
+                            const nextVal = Math.max(
+                              0,
+                              Math.min(f.max, Number(e.target.value) || 0)
+                            );
+                            const nextCounts = {
+                              placeThousands: selectedWidget.placeThousands ?? 0,
+                              placeHundreds: selectedWidget.placeHundreds ?? 0,
+                              placeTens: selectedWidget.placeTens ?? 0,
+                              placeOnes: selectedWidget.placeOnes ?? 0,
+                              [f.key]: nextVal,
+                            };
+                            const total =
+                              nextCounts.placeThousands * 1000 +
+                              nextCounts.placeHundreds * 100 +
+                              nextCounts.placeTens * 10 +
+                              nextCounts.placeOnes;
+                            updateWidgetProps(selectedWidget.id, {
+                              ...nextCounts,
+                              title: `مکعب ارزش مکانی (${fmt(total)})`,
+                            });
+                          }}
+                          className="w-full px-1 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold text-center text-[11px]"
+                        />
+                      </label>
+                    ))}
+                  </div>
                 </div>
               )}
 
