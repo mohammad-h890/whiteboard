@@ -33,6 +33,11 @@ import {
   removeCustomBoardShortcut,
   findMatchingCustomShortcut,
   formatKeyboardEventToCombo,
+  clampFloatingPanelPosition,
+  isPointHittingBoardWidget,
+  togglePinnedBoardPage,
+  renamePinnedBoardPage,
+  computeStrokeSelectionOverlay,
   Point2D,
 } from './canvasAndMathEngine';
 
@@ -109,6 +114,24 @@ test('recognizeGeometricShape detects line, circle, ellipse, triangle, rectangle
   const rectRes = recognizeGeometricShape(rectPts, true);
   assert.equal(rectRes.type, 'rectangle');
   assert.equal(rectRes.snappedPoints.length, 5);
+
+  // Imperfect hand-drawn Square with slightly tilted sides and a closing corner kink -> must snap to 'مربع منتظم', NOT pentagon or parallelogram!
+  const imperfectSquarePts = [
+    ...samplePolygonEdges(
+      [
+        { x: 52, y: 48 },
+        { x: 174, y: 54 },
+        { x: 168, y: 172 },
+        { x: 48, y: 166 },
+      ],
+      10
+    ),
+    { x: 58, y: 44 }, // slight overshoot kink at end of stroke
+  ];
+  const squareRes = recognizeGeometricShape(imperfectSquarePts, true);
+  assert.equal(squareRes.type, 'rectangle');
+  assert.equal(squareRes.labelFa, 'مربع منتظم');
+  assert.equal(squareRes.snappedPoints.length, 5);
 
   // Hand-drawn rhombus (diamond)
   const rhombusPts = samplePolygonEdges([
@@ -410,3 +433,124 @@ test('fraction-line preset, FREQUENT_MATH_SYMBOLS, and custom board shortcuts wo
   shortcuts = removeCustomBoardShortcut(shortcuts, 'sc-custom-8');
   assert.equal(findMatchingCustomShortcut(shortcuts, 'Alt+8'), undefined);
 });
+
+test('clampFloatingPanelPosition, isPointHittingBoardWidget, and togglePinnedBoardPage work accurately', () => {
+  // 1. Floating widget editor near top-left or bottom-right corner must stay 100% inside viewport
+  const topLeftClamped = clampFloatingPanelPosition({
+    desiredLeft: -120,
+    desiredTop: -40,
+    panelWidth: 320,
+    panelHeight: 360,
+    viewportWidth: 1280,
+    viewportHeight: 800,
+    padding: 12,
+  });
+  assert.equal(topLeftClamped.left, 12);
+  assert.equal(topLeftClamped.top, 12);
+  assert.equal(topLeftClamped.wasClampedX, true);
+  assert.equal(topLeftClamped.wasClampedY, true);
+
+  const bottomRightClamped = clampFloatingPanelPosition({
+    desiredLeft: 1180,
+    desiredTop: 720,
+    panelWidth: 320,
+    panelHeight: 360,
+    viewportWidth: 1280,
+    viewportHeight: 800,
+    padding: 12,
+  });
+  assert.equal(bottomRightClamped.left, 1280 - 320 - 12);
+  assert.equal(bottomRightClamped.top, 800 - 360 - 12);
+  assert.equal(bottomRightClamped.wasClampedX, true);
+  assert.equal(bottomRightClamped.wasClampedY, true);
+
+  // 2. Stroke eraser hits ready-made shapes, widgets, and Persian numbers accurately
+  const numWidget = {
+    id: 'num-1',
+    title: 'عدد فارسی (۱۲۵)',
+    x: 200,
+    y: 150,
+    scale: 1,
+    widgetKind: 'persian-number' as const,
+  };
+  assert.equal(isPointHittingBoardWidget({ x: 240, y: 185 }, numWidget, 20), true);
+  assert.equal(isPointHittingBoardWidget({ x: 500, y: 500 }, numWidget, 20), false);
+
+  const axisWidget = {
+    id: 'axis-1',
+    title: 'محور اعداد صحیح',
+    x: 100,
+    y: 300,
+    scale: 1,
+    widgetKind: 'lab-shape' as const,
+  };
+  assert.equal(isPointHittingBoardWidget({ x: 420, y: 350 }, axisWidget, 18), true);
+  assert.equal(isPointHittingBoardWidget({ x: 600, y: 350 }, axisWidget, 18), false);
+
+  // 3. Pinning and unpinning whiteboard pages on the board bar keeps pages sorted
+  let pinned = togglePinnedBoardPage([], 3, 'تمرین کسرها');
+  pinned = togglePinnedBoardPage(pinned, 1);
+  assert.deepEqual(
+    pinned.map((p) => p.pageNumber),
+    [1, 3]
+  );
+  assert.equal(pinned[1].label, 'تمرین کسرها');
+  pinned = renamePinnedBoardPage(pinned, 1, 'صفحه فرمول‌ها');
+  assert.equal(pinned[0].label, 'صفحه فرمول‌ها');
+  pinned = togglePinnedBoardPage(pinned, 3);
+  assert.deepEqual(
+    pinned.map((p) => p.pageNumber),
+    [1]
+  );
+});
+
+test('computeStrokeSelectionOverlay aligns tightly around thick shapes and clamps edges', () => {
+  const rectBox = {
+    minX: 400,
+    minY: 260,
+    maxX: 600,
+    maxY: 460,
+    width: 200,
+    height: 200,
+  };
+  const layout = computeStrokeSelectionOverlay({
+    box: rectBox,
+    maxStrokeWidth: 16,
+    boardWidth: 1200,
+    boardHeight: 800,
+    toolbarClearanceY: 230,
+  });
+
+  // padPx = ceil(16 / 2) + 6 = 14
+  assert.equal(layout.padPx, 14);
+  assert.equal(layout.leftPct, Number((((400 - 14) / 1200) * 100).toFixed(4)));
+  assert.equal(layout.topPct, Number((((260 - 14) / 800) * 100).toFixed(4)));
+  assert.equal(layout.widthPct, Number((((200 + 28) / 1200) * 100).toFixed(4)));
+  assert.equal(layout.heightPct, Number((((200 + 28) / 800) * 100).toFixed(4)));
+  assert.equal(layout.toolbarPlacement, 'above');
+  assert.equal(layout.toolbarAlign, 'right');
+
+  // Under sticky top toolbars (minY = 200 < clearance 250): flips cleanly below the shape!
+  const underStickyLayout = computeStrokeSelectionOverlay({
+    box: { minX: 450, minY: 200, maxX: 650, maxY: 360, width: 200, height: 160 },
+    maxStrokeWidth: 14,
+    boardWidth: 1200,
+    boardHeight: 800,
+    toolbarClearanceY: 250,
+  });
+  assert.equal(underStickyLayout.toolbarPlacement, 'below');
+  assert.equal(underStickyLayout.toolbarAlign, 'right');
+
+  // Near top-left corner: clamps to 0% and aligns left + flips below
+  const topCornerLayout = computeStrokeSelectionOverlay({
+    box: { minX: 4, minY: 6, maxX: 120, maxY: 90, width: 116, height: 84 },
+    maxStrokeWidth: 10,
+    boardWidth: 1200,
+    boardHeight: 800,
+  });
+  assert.equal(topCornerLayout.leftPct, 0);
+  assert.equal(topCornerLayout.topPct, 0);
+  assert.equal(topCornerLayout.toolbarPlacement, 'below');
+  assert.equal(topCornerLayout.toolbarAlign, 'left');
+});
+

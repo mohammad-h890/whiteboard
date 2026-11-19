@@ -35,6 +35,9 @@ import {
   Monitor,
   Download,
   ShieldCheck,
+  Image as ImageIcon,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { CanvasBackgroundId, toPersianDigits } from '../core/featureEngine';
 import {
@@ -56,6 +59,11 @@ import {
   translateStrokePoints,
   scaleStrokePointsAboutCenter,
   scaleMultiStrokesAboutCommonCenter,
+  clampFloatingPanelPosition,
+  isPointHittingBoardWidget,
+  PinnedBoardPage,
+  togglePinnedBoardPage,
+  computeStrokeSelectionOverlay,
   Point2D,
 } from '../core/canvasAndMathEngine';
 import { BareBoardShapeGraphic } from './BareBoardShapeGraphic';
@@ -88,6 +96,7 @@ export interface BoardLayer {
 
 export interface StampedBoardWidget {
   id: string;
+  pageIndex?: number;
   title: string;
   summary: string;
   badgeColor: string;
@@ -116,6 +125,7 @@ export interface StampedBoardWidget {
 
 interface StickyNode {
   id: string;
+  pageIndex?: number;
   title: string;
   text: string;
   colorClass: string;
@@ -126,6 +136,7 @@ interface StickyNode {
 
 interface DroppedBoardPdf {
   id: string;
+  pageIndex?: number;
   name: string;
   kind: 'pdf-blob' | 'image-blob' | 'sample-sheet';
   url?: string;
@@ -135,6 +146,7 @@ interface DroppedBoardPdf {
   y: number;
   width: number;
   height: number;
+  zoom?: number;
   sampleQuestionIndex: number;
   interactiveScrollMode: boolean;
   isFullscreenOnBoard?: boolean;
@@ -207,6 +219,7 @@ interface SmartWhiteboardCanvasProps {
   watermarkCode?: string;
   usePersianNumerals: boolean;
   clearTrigger: number;
+  onCurrentPageChange?: (page: number) => void;
   onLiveBoardSync?: (state: {
     currentPage: number;
     totalPages: number;
@@ -272,15 +285,46 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
   watermarkCode = 'DB-98421',
   usePersianNumerals,
   clearTrigger,
+  onCurrentPageChange,
   onLiveBoardSync,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
   const pdfFileInputRef = useRef<HTMLInputElement | null>(null);
+  const imageFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [imageImportFullscreenMode, setImageImportFullscreenMode] = useState<boolean>(false);
+  const [showPdfImportMenu, setShowPdfImportMenu] = useState<boolean>(false);
   const [strokes, setStrokes] = useState<StrokePath[]>(DEFAULT_STROKES);
   const [redoStack, setRedoStack] = useState<StrokePath[]>([]);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(2);
+  const [pinnedPages, setPinnedPages] = useState<PinnedBoardPage[]>(() => {
+    try {
+      const saved = window.localStorage.getItem('daneshboard_pinned_board_pages_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  });
+  const lastClearTriggerRef = useRef<number>(clearTrigger);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('daneshboard_pinned_board_pages_v1', JSON.stringify(pinnedPages));
+    } catch {
+      // ignore
+    }
+  }, [pinnedPages]);
+
+  useEffect(() => {
+    onCurrentPageChange?.(currentPage);
+    setSelectedWidgetId(null);
+    setSelectedStrokeIds([]);
+  }, [currentPage, onCurrentPageChange]);
 
   // Fullscreen & Expandable/Scrollable Board Dimensions
   const [isBoardFullscreen, setIsBoardFullscreen] = useState<boolean>(false);
@@ -328,7 +372,18 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
   const [showLayersPopover, setShowLayersPopover] = useState<boolean>(false);
   const [showMoreToolsMenu, setShowMoreToolsMenu] = useState<boolean>(false);
   const [lastSnapNotice, setLastSnapNotice] = useState<string | null>(null);
-  const [forcedShapeKind, setForcedShapeKind] = useState<'auto' | 'line' | 'freehand'>('auto');
+  const [forcedShapeKind, setForcedShapeKind] = useState<
+    | 'auto'
+    | 'square'
+    | 'rectangle'
+    | 'circle'
+    | 'triangle'
+    | 'rhombus'
+    | 'pentagon'
+    | 'hexagon'
+    | 'line'
+    | 'freehand'
+  >('auto');
 
   // Small Pinnable Menu for Inserting Numbers on Board (منوی کوچک پین‌شونده درج عدد روی تخته)
   const [showNumberMiniMenu, setShowNumberMiniMenu] = useState<boolean>(false);
@@ -358,8 +413,26 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     'جلسه تدریس ریاضی، هندسه و فیزیک'
   );
 
-  // PDF / Image Dropped Directly on the Whiteboard
-  const [boardPdfSheet, setBoardPdfSheet] = useState<DroppedBoardPdf | null>(null);
+  // PDF / Image Dropped Directly on the Whiteboard (scoped per whiteboard pageIndex)
+  const [boardPdfSheets, setBoardPdfSheets] = useState<DroppedBoardPdf[]>([]);
+  const boardPdfSheet = React.useMemo(
+    () => boardPdfSheets.find((s) => (s.pageIndex ?? 1) === currentPage) ?? null,
+    [boardPdfSheets, currentPage]
+  );
+  const setBoardPdfSheet = (
+    updater:
+      | DroppedBoardPdf
+      | null
+      | ((prev: DroppedBoardPdf | null) => DroppedBoardPdf | null)
+  ) => {
+    setBoardPdfSheets((prevList) => {
+      const existing = prevList.find((s) => (s.pageIndex ?? 1) === currentPage) ?? null;
+      const nextItem = typeof updater === 'function' ? updater(existing) : updater;
+      const others = prevList.filter((s) => (s.pageIndex ?? 1) !== currentPage);
+      if (!nextItem) return others;
+      return [...others, { ...nextItem, pageIndex: nextItem.pageIndex ?? currentPage, zoom: nextItem.zoom ?? 1 }];
+    });
+  };
   const [draggingPdfSheet, setDraggingPdfSheet] = useState<boolean>(false);
 
   // Selected Widget & Dragging State (No floating badge above widgets!)
@@ -380,6 +453,8 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     hitWidgetId: string | null;
   } | null>(null);
   const boardContainerRef = useRef<HTMLDivElement | null>(null);
+  const activeDrawingPointerIdRef = useRef<number | null>(null);
+  const [isActivelyDrawing, setIsActivelyDrawing] = useState<boolean>(false);
   const [mousePos, setMousePos] = useState<{ x: number; y: number }>({ x: 450, y: 280 });
   const [boardCursorPos, setBoardCursorPos] = useState<{ x: number; y: number } | null>(null);
   const [clippedQuestionOnBoard, setClippedQuestionOnBoard] = useState<boolean>(false);
@@ -437,7 +512,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
         setShowNumberMiniMenu(true);
         break;
       case 'pdf-import':
-        pdfFileInputRef.current?.click();
+        setShowPdfImportMenu((v) => !v);
         break;
       case 'handwriting-pad':
         setHandwritingPadTab('handwriting');
@@ -460,9 +535,10 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
   }, [featureTrigger]);
 
   useEffect(() => {
-    if (clearTrigger > 0) {
+    if (clearTrigger > 0 && clearTrigger !== lastClearTriggerRef.current) {
+      lastClearTriggerRef.current = clearTrigger;
       setStrokes((prev) => prev.filter((s) => s.pageIndex !== currentPage));
-      setStickyNodes([]);
+      setStickyNodes((prev) => prev.filter((n) => (n.pageIndex ?? 1) !== currentPage));
       setShowDynamicTable(false);
       setSelectedWidgetId(null);
       setSelectedStrokeIds([]);
@@ -498,30 +574,79 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     [strokes, currentPage]
   );
 
+  const pageWidgets = React.useMemo(
+    () => stampedWidgets.filter((w) => (w.pageIndex ?? 1) === currentPage),
+    [stampedWidgets, currentPage]
+  );
+
+  const pageStickyNodes = React.useMemo(
+    () => stickyNodes.filter((n) => (n.pageIndex ?? 1) === currentPage),
+    [stickyNodes, currentPage]
+  );
+
+  useEffect(() => {
+    document.body.classList.toggle('is-drawing-active', isActivelyDrawing);
+    return () => {
+      document.body.classList.remove('is-drawing-active');
+    };
+  }, [isActivelyDrawing]);
+
   const selectedStrokesBox = React.useMemo(() => {
     if (selectedStrokeIds.length === 0) return null;
     const selSet = new Set(selectedStrokeIds);
     const chosen = pageStrokes.filter((s) => selSet.has(s.id));
     if (chosen.length === 0) return null;
-    return getStrokesBoundingBox(chosen.map((s) => s.points));
-  }, [selectedStrokeIds, pageStrokes]);
+    const box = getStrokesBoundingBox(chosen.map((s) => s.points));
+    if (!box) return null;
+    const maxLineWidth = chosen.reduce((acc, s) => {
+      const lw =
+        s.tool === 'highlighter'
+          ? s.width * 4.5
+          : s.tool === 'marker'
+          ? s.width * 2.2
+          : s.width;
+      return Math.max(acc, lw);
+    }, 4);
+    const toolbarClearanceY =
+      activeTool === 'shape-snap'
+        ? 250
+        : isPenDrawingTool || isEraserActive || activeTool === 'lasso'
+        ? 190
+        : 120;
+    const overlay = computeStrokeSelectionOverlay({
+      box,
+      maxStrokeWidth: maxLineWidth,
+      boardWidth,
+      boardHeight,
+      toolbarClearanceY,
+    });
+    return { ...box, maxLineWidth, overlay };
+  }, [
+    selectedStrokeIds,
+    pageStrokes,
+    boardWidth,
+    boardHeight,
+    activeTool,
+    isPenDrawingTool,
+    isEraserActive,
+  ]);
 
   const selectedWidget = React.useMemo(
-    () => stampedWidgets.find((w) => w.id === selectedWidgetId) ?? null,
-    [stampedWidgets, selectedWidgetId]
+    () => pageWidgets.find((w) => w.id === selectedWidgetId) ?? null,
+    [pageWidgets, selectedWidgetId]
   );
 
-  // Automatically select newly stamped widget so its small corner menu opens immediately
+  // Automatically select newly stamped widget on the current page so its edit panel opens immediately
   const prevWidgetsCountRef = useRef<number>(stampedWidgets.length);
   useEffect(() => {
     if (stampedWidgets.length > prevWidgetsCountRef.current) {
       const newest = stampedWidgets[stampedWidgets.length - 1];
-      if (newest) {
+      if (newest && (newest.pageIndex ?? 1) === currentPage) {
         setSelectedWidgetId(newest.id);
       }
     }
     prevWidgetsCountRef.current = stampedWidgets.length;
-  }, [stampedWidgets.length]);
+  }, [stampedWidgets.length, currentPage]);
 
   const updateWidgetProps = (id: string, patch: Partial<StampedBoardWidget>) => {
     if (!onUpdateStampedWidgets) return;
@@ -534,10 +659,11 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     if (!onUpdateStampedWidgets) return;
     const persianStr = toPersianDigits(rawText.trim() || '۰', true);
     const newId = `num-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const x = customX ?? 340 + (stampedWidgets.length % 5) * 60;
-    const y = customY ?? 150 + (stampedWidgets.length % 4) * 55;
+    const x = customX ?? 340 + (pageWidgets.length % 5) * 60;
+    const y = customY ?? 150 + (pageWidgets.length % 4) * 55;
     const newWidget: StampedBoardWidget = {
       id: newId,
+      pageIndex: currentPage,
       title: `عدد فارسی (${persianStr})`,
       summary: persianStr,
       badgeColor: strokeColor,
@@ -571,10 +697,11 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
       return;
     }
     const newId = `sym-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const x = customX ?? 350 + (stampedWidgets.length % 5) * 55;
-    const y = customY ?? 155 + (stampedWidgets.length % 4) * 50;
+    const x = customX ?? 350 + (pageWidgets.length % 5) * 55;
+    const y = customY ?? 155 + (pageWidgets.length % 4) * 50;
     const newWidget: StampedBoardWidget = {
       id: newId,
+      pageIndex: currentPage,
       title: `علامت ریاضی (${labelFa})`,
       summary: symbolText,
       badgeColor: strokeColor === '#0f172a' ? '#0284c7' : strokeColor,
@@ -604,10 +731,11 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     if (!onUpdateStampedWidgets) return;
     const preset = GEOMETRIC_SHAPE_PRESETS.find((p) => p.id === shapeId);
     const newId = `geo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const x = customX ?? 360 + (stampedWidgets.length % 4) * 70;
-    const y = customY ?? 160 + (stampedWidgets.length % 4) * 60;
+    const x = customX ?? 360 + (pageWidgets.length % 4) * 70;
+    const y = customY ?? 160 + (pageWidgets.length % 4) * 60;
     const newWidget: StampedBoardWidget = {
       id: newId,
+      pageIndex: currentPage,
       title: preset?.labelFa ?? 'شکل هندسی',
       summary: shapeId === 'fraction-line' ? '۳/۵' : '',
       badgeColor: strokeColor === '#0f172a' ? '#38bdf8' : strokeColor,
@@ -655,9 +783,58 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
   // Global keyboard listener for Shapes/Widgets Delete & Resize, Pen/Eraser Size, Custom Shortcuts & Esc
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isBoardFullscreen) {
-        setIsBoardFullscreen(false);
-        return;
+      if (e.key === 'Escape') {
+        if (capturingShortcutKey) {
+          e.preventDefault();
+          setCapturingShortcutKey(false);
+          return;
+        }
+        let closedFloating = false;
+        if (selectedWidgetId) {
+          setSelectedWidgetId(null);
+          closedFloating = true;
+        }
+        if (selectedStrokeIds.length > 0) {
+          setSelectedStrokeIds([]);
+          closedFloating = true;
+        }
+        if (showShapesPalette) {
+          setShowShapesPalette(false);
+          closedFloating = true;
+        }
+        if (showNumberMiniMenu) {
+          setShowNumberMiniMenu(false);
+          closedFloating = true;
+        }
+        if (showPdfImportMenu) {
+          setShowPdfImportMenu(false);
+          closedFloating = true;
+        }
+        if (showLayersPopover) {
+          setShowLayersPopover(false);
+          closedFloating = true;
+        }
+        if (showMoreToolsMenu) {
+          setShowMoreToolsMenu(false);
+          closedFloating = true;
+        }
+        if (showClassNotesModal) {
+          setShowClassNotesModal(false);
+          closedFloating = true;
+        }
+        if (showHandwritingPad) {
+          setShowHandwritingPad(false);
+          closedFloating = true;
+        }
+        if (closedFloating) {
+          e.preventDefault();
+          return;
+        }
+        if (isBoardFullscreen) {
+          e.preventDefault();
+          setIsBoardFullscreen(false);
+          return;
+        }
       }
       if (capturingShortcutKey) return;
       const target = e.target as HTMLElement | null;
@@ -728,13 +905,8 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
         return;
       }
 
-      // 3. '+' / '=' or 'ArrowUp' -> Increase dimensions of selected widget or drawn shape, or increase pen/eraser size
-      if (
-        !e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey &&
-        (e.key === '+' || e.key === '=' || e.key === 'ArrowUp')
-      ) {
+      // 3. '+' / '=' -> Increase dimensions of selected widget or drawn shape, or increase pen/eraser size
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === '+' || e.key === '=')) {
         if (selectedWidget) {
           e.preventDefault();
           const nextScale = Math.min(
@@ -755,29 +927,22 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
           window.setTimeout(() => setLastSnapNotice(null), 1600);
           return;
         }
-        if (e.key === '+' || e.key === '=') {
-          e.preventDefault();
-          if (isEraserActive && onChangeEraserSize) {
-            const nextSz = Math.min(80, eraserSize + 6);
-            onChangeEraserSize(nextSz);
-            setLastSnapNotice(`اندازه پاک‌کن بزرگ‌تر شد: ${fmt(nextSz)}px`);
-          } else if (onChangeStrokeWidth) {
-            const nextW = Math.min(24, strokeWidth + 2);
-            onChangeStrokeWidth(nextW);
-            setLastSnapNotice(`اندازه قلم بزرگ‌تر شد: ${fmt(nextW)}px`);
-          }
-          window.setTimeout(() => setLastSnapNotice(null), 1600);
-          return;
+        e.preventDefault();
+        if (isEraserActive && onChangeEraserSize) {
+          const nextSz = Math.min(80, eraserSize + 6);
+          onChangeEraserSize(nextSz);
+          setLastSnapNotice(`اندازه پاک‌کن بزرگ‌تر شد: ${fmt(nextSz)}px`);
+        } else if (onChangeStrokeWidth) {
+          const nextW = Math.min(24, strokeWidth + 2);
+          onChangeStrokeWidth(nextW);
+          setLastSnapNotice(`اندازه قلم بزرگ‌تر شد: ${fmt(nextW)}px`);
         }
+        window.setTimeout(() => setLastSnapNotice(null), 1600);
+        return;
       }
 
-      // 4. '-' / '_' or 'ArrowDown' -> Decrease dimensions of selected widget or drawn shape, or decrease pen/eraser size
-      if (
-        !e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey &&
-        (e.key === '-' || e.key === '_' || e.key === 'ArrowDown')
-      ) {
+      // 4. '-' / '_' -> Decrease dimensions of selected widget or drawn shape, or decrease pen/eraser size
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === '-' || e.key === '_')) {
         if (selectedWidget) {
           e.preventDefault();
           const nextScale = Math.max(
@@ -798,30 +963,34 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
           window.setTimeout(() => setLastSnapNotice(null), 1600);
           return;
         }
-        if (e.key === '-' || e.key === '_') {
-          e.preventDefault();
-          if (isEraserActive && onChangeEraserSize) {
-            const nextSz = Math.max(6, eraserSize - 6);
-            onChangeEraserSize(nextSz);
-            setLastSnapNotice(`اندازه پاک‌کن کوچک‌تر شد: ${fmt(nextSz)}px`);
-          } else if (onChangeStrokeWidth) {
-            const nextW = Math.max(2, strokeWidth - 2);
-            onChangeStrokeWidth(nextW);
-            setLastSnapNotice(`اندازه قلم کوچک‌تر شد: ${fmt(nextW)}px`);
-          }
-          window.setTimeout(() => setLastSnapNotice(null), 1600);
-          return;
+        e.preventDefault();
+        if (isEraserActive && onChangeEraserSize) {
+          const nextSz = Math.max(6, eraserSize - 6);
+          onChangeEraserSize(nextSz);
+          setLastSnapNotice(`اندازه پاک‌کن کوچک‌تر شد: ${fmt(nextSz)}px`);
+        } else if (onChangeStrokeWidth) {
+          const nextW = Math.max(2, strokeWidth - 2);
+          onChangeStrokeWidth(nextW);
+          setLastSnapNotice(`اندازه قلم کوچک‌تر شد: ${fmt(nextW)}px`);
         }
+        window.setTimeout(() => setLastSnapNotice(null), 1600);
+        return;
       }
 
-      // 5. ArrowLeft / ArrowRight -> Nudge selected widget or selected strokes horizontally
+      // 5. All 4 Arrow Keys (ArrowUp / ArrowDown / ArrowLeft / ArrowRight) -> Move selected widget or drawn shape in 4 directions
       if (
         !e.ctrlKey &&
         !e.metaKey &&
         !e.altKey &&
-        (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+        (e.key === 'ArrowUp' ||
+          e.key === 'ArrowDown' ||
+          e.key === 'ArrowLeft' ||
+          e.key === 'ArrowRight')
       ) {
-        const dx = e.key === 'ArrowLeft' ? -14 : 14;
+        const step = e.shiftKey ? 32 : 16;
+        const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+        const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+
         if (selectedWidget) {
           e.preventDefault();
           const curPos = widgetCoords[selectedWidget.id] ?? {
@@ -829,11 +998,12 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
             y: selectedWidget.y,
           };
           const nextX = Math.max(8, curPos.x + dx);
+          const nextY = Math.max(36, curPos.y + dy);
           setWidgetCoords((prev) => ({
             ...prev,
-            [selectedWidget.id]: { x: nextX, y: curPos.y },
+            [selectedWidget.id]: { x: nextX, y: nextY },
           }));
-          updateWidgetProps(selectedWidget.id, { x: nextX });
+          updateWidgetProps(selectedWidget.id, { x: nextX, y: nextY });
           return;
         }
         if (selectedStrokeIds.length > 0) {
@@ -841,7 +1011,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
           const selSet = new Set(selectedStrokeIds);
           setStrokes((prev) =>
             prev.map((s) =>
-              selSet.has(s.id) ? { ...s, points: translateStrokePoints(s.points, dx, 0) } : s
+              selSet.has(s.id) ? { ...s, points: translateStrokePoints(s.points, dx, dy) } : s
             )
           );
           return;
@@ -1177,6 +1347,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
       ...prev,
       {
         id: id1,
+        pageIndex: currentPage,
         title: 'نکته ۱',
         text: 'قانون دوم نیوتن: ∑F = m·a',
         colorClass:
@@ -1187,6 +1358,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
       },
       {
         id: id2,
+        pageIndex: currentPage,
         title: 'نتیجه',
         text: 'a = g·(sinθ − μ·cosθ)',
         colorClass:
@@ -1201,30 +1373,22 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
+    const scaleX = canvas.width / Math.max(1, rect.width);
+    const scaleY = canvas.height / Math.max(1, rect.height);
     return {
-      x: (e.clientX - rect.left) * scaleX,
-      y: (e.clientY - rect.top) * scaleY,
+      x: Math.max(0, Math.min(canvas.width, (e.clientX - rect.left) * scaleX)),
+      y: Math.max(0, Math.min(canvas.height, (e.clientY - rect.top) * scaleY)),
     };
   };
 
   const findHitWidgetAtRelCoords = (relX: number, relY: number): StampedBoardWidget | null => {
-    for (let i = stampedWidgets.length - 1; i >= 0; i--) {
-      const w = stampedWidgets[i];
+    for (let i = pageWidgets.length - 1; i >= 0; i--) {
+      const w = pageWidgets[i];
       const pos = widgetCoords[w.id] ?? {
         x: w.x || 240 + (i % 3) * 85,
         y: w.y || 95 + (i % 4) * 75,
       };
-      const sc = w.scale ?? 1;
-      const wBox = (w.title.includes('محور') ? 360 : 190) * sc;
-      const hBox = 145 * sc;
-      if (
-        relX >= pos.x - 12 &&
-        relX <= pos.x + wBox &&
-        relY >= pos.y - 12 &&
-        relY <= pos.y + hBox
-      ) {
+      if (isPointHittingBoardWidget({ x: relX, y: relY }, { ...w, x: pos.x, y: pos.y }, 10)) {
         return w;
       }
     }
@@ -1246,6 +1410,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     const effectiveRadius = Math.max(6, eraserSize);
 
     if (activeTool === 'eraser-stroke') {
+      // 1. Erase hit freehand strokes & snapped shapes on the current page
       setStrokes((prev) =>
         prev.filter((s) => {
           if (s.pageIndex !== currentPage) return true;
@@ -1255,6 +1420,63 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
           return !hit;
         })
       );
+
+      // 2. Also erase any hit stamped widgets, ready-made geometric shapes, and ready-made Persian numbers on currentPage!
+      const canvas = canvasRef.current;
+      const container = boardContainerRef.current;
+      const canvasRect = canvas?.getBoundingClientRect();
+      const containerRect = container?.getBoundingClientRect();
+      const canvasToRelX =
+        canvas && canvasRect && canvas.width > 0 ? canvasRect.width / canvas.width : 1;
+      const canvasToRelY =
+        canvas && canvasRect && canvas.height > 0 ? canvasRect.height / canvas.height : 1;
+      const offsetX = canvasRect && containerRect ? canvasRect.left - containerRect.left : 0;
+      const offsetY = canvasRect && containerRect ? canvasRect.top - containerRect.top : 0;
+      const relSamples: Point2D[] = samplePoints.map((sp) => ({
+        x: sp.x * canvasToRelX + offsetX,
+        y: sp.y * canvasToRelY + offsetY,
+      }));
+      const relRadius = effectiveRadius * Math.max(canvasToRelX, canvasToRelY);
+
+      if (onUpdateStampedWidgets && pageWidgets.length > 0) {
+        const hitIds = new Set<string>();
+        pageWidgets.forEach((w, idx) => {
+          const pos = widgetCoords[w.id] ?? {
+            x: w.x || 240 + (idx % 3) * 85,
+            y: w.y || 95 + (idx % 4) * 75,
+          };
+          if (
+            relSamples.some((rp) =>
+              isPointHittingBoardWidget(rp, { ...w, x: pos.x, y: pos.y }, relRadius)
+            )
+          ) {
+            hitIds.add(w.id);
+          }
+        });
+        if (hitIds.size > 0) {
+          onUpdateStampedWidgets((prev) => prev.filter((w) => !hitIds.has(w.id)));
+          if (selectedWidgetId && hitIds.has(selectedWidgetId)) {
+            setSelectedWidgetId(null);
+          }
+        }
+      }
+
+      // 3. Also erase hit sticky notes on currentPage
+      if (pageStickyNodes.length > 0) {
+        setStickyNodes((prev) =>
+          prev.filter((n) => {
+            if ((n.pageIndex ?? 1) !== currentPage) return true;
+            const hit = relSamples.some(
+              (rp) =>
+                rp.x >= n.x - relRadius &&
+                rp.x <= n.x + 176 + relRadius &&
+                rp.y >= n.y - relRadius &&
+                rp.y <= n.y + 84 + relRadius
+            );
+            return !hit;
+          })
+        );
+      }
       return;
     }
 
@@ -1318,8 +1540,8 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
         window.setTimeout(() => setLastSnapNotice(null), 2200);
         return;
       }
-      if (stampedWidgets.length > 0 && onUpdateStampedWidgets) {
-        const lastW = stampedWidgets[stampedWidgets.length - 1];
+      if (pageWidgets.length > 0 && onUpdateStampedWidgets) {
+        const lastW = pageWidgets[pageWidgets.length - 1];
         updateWidgetProps(lastW.id, { badgeColor: color, filled: true });
         setSelectedWidgetId(lastW.id);
         setLastSnapNotice(`رنگ داخل «${lastW.title}» تغییر کرد`);
@@ -1342,8 +1564,8 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
       if (coloredStroke) {
         setLastSnapNotice('داخل آخرین شکل ترسیم‌شده رنگ‌آمیزی شد');
         window.setTimeout(() => setLastSnapNotice(null), 2200);
-      } else if (stampedWidgets.length > 0) {
-        const lastW = stampedWidgets[stampedWidgets.length - 1];
+      } else if (pageWidgets.length > 0) {
+        const lastW = pageWidgets[pageWidgets.length - 1];
         updateWidgetProps(lastW.id, { badgeColor: color, filled: true });
         setSelectedWidgetId(lastW.id);
         setLastSnapNotice(`رنگ داخل «${lastW.title}» تغییر کرد`);
@@ -1361,6 +1583,8 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (e.button === 2) return;
+    e.preventDefault();
+    window.getSelection?.()?.removeAllRanges?.();
 
     const pt = getPointerCoords(e);
     const container = boardContainerRef.current;
@@ -1436,40 +1660,65 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
         );
         return;
       }
-      if (stampedWidgets.length > 0) {
-        const lastW = stampedWidgets[stampedWidgets.length - 1];
+      if (pageWidgets.length > 0) {
+        const lastW = pageWidgets[pageWidgets.length - 1];
         updateWidgetProps(lastW.id, { badgeColor: strokeColor, filled: true });
         setSelectedWidgetId(lastW.id);
       }
       return;
     }
 
-    // 2. If user clicked inside an active Lasso handwritten stroke selection box, start dragging those strokes!
+    // 2. If user clicked inside an active selected shape/strokes bounding box, start dragging it with the mouse in ANY non-eraser mode!
     if (
-      activeTool === 'lasso' &&
+      !isEraserActive &&
+      !isOnBoardHandwritingActive &&
       selectedStrokesBox &&
-      pt.x >= selectedStrokesBox.minX - 16 &&
-      pt.x <= selectedStrokesBox.maxX + 16 &&
-      pt.y >= selectedStrokesBox.minY - 16 &&
-      pt.y <= selectedStrokesBox.maxY + 16
+      pt.x >= selectedStrokesBox.minX - 18 &&
+      pt.x <= selectedStrokesBox.maxX + 18 &&
+      pt.y >= selectedStrokesBox.minY - 18 &&
+      pt.y <= selectedStrokesBox.maxY + 18
     ) {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
       setDraggingSelectedStrokes({ lastX: pt.x, lastY: pt.y });
       return;
     }
 
-    // 3. If user clicked on a widget while in Lasso mode OR while that widget is selected and moveSelectedWithMouse is enabled:
+    // 2b. In 'lasso' mode, if user presses directly on an existing drawn shape/stroke on the board, select and drag it immediately!
+    if (!isEraserActive && !isOnBoardHandwritingActive && activeTool === 'lasso') {
+      for (let i = pageStrokes.length - 1; i >= 0; i--) {
+        const s = pageStrokes[i];
+        if (isStrokeHitByEraser(s.points, pt, 16 + s.width)) {
+          e.currentTarget.setPointerCapture?.(e.pointerId);
+          setSelectedStrokeIds([s.id]);
+          setSelectedWidgetId(null);
+          setDraggingSelectedStrokes({ lastX: pt.x, lastY: pt.y });
+          return;
+        }
+      }
+    }
+
+    // 3. If user clicked on a widget while in Lasso mode OR on an already-selected widget when mouse-move is enabled:
     if (
       hitWidget &&
-      (activeTool === 'lasso' ||
-        (selectedWidgetId === hitWidget.id && moveSelectedWithMouse && !isEraserActive))
+      !isEraserActive &&
+      (activeTool === 'lasso' || (moveSelectedWithMouse && hitWidget.id === selectedWidgetId))
     ) {
       setSelectedWidgetId(hitWidget.id);
+      setSelectedStrokeIds([]);
       setDraggingWidgetId(hitWidget.id);
       return;
     }
 
     const activeLayer = layers.find((l) => l.id === activeLayerId);
     if (!activeLayer || activeLayer.locked || !activeLayer.visible) return;
+
+    try {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      activeDrawingPointerIdRef.current = e.pointerId;
+    } catch {
+      activeDrawingPointerIdRef.current = null;
+    }
+    setIsActivelyDrawing(true);
 
     if (isEraserActive) {
       isDrawingRef.current = true;
@@ -1510,10 +1759,11 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     if (draggingSelectedStrokes && selectedStrokeIds.length > 0) {
       const canvas = canvasRef.current;
       if (!canvas) return;
-      const scaleX = canvas.width / Math.max(1, rect.width);
-      const scaleY = canvas.height / Math.max(1, rect.height);
-      const curCanvasX = relX * scaleX;
-      const curCanvasY = relY * scaleY;
+      const canvasRect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / Math.max(1, canvasRect.width);
+      const scaleY = canvas.height / Math.max(1, canvasRect.height);
+      const curCanvasX = (e.clientX - canvasRect.left) * scaleX;
+      const curCanvasY = (e.clientY - canvasRect.top) * scaleY;
       const dx = curCanvasX - draggingSelectedStrokes.lastX;
       const dy = curCanvasY - draggingSelectedStrokes.lastY;
       if (Math.abs(dx) > 0.4 || Math.abs(dy) > 0.4) {
@@ -1581,7 +1831,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     const visibleStrokes = strokes.filter(
       (s) => s.pageIndex === currentPage && visibleLayerIds.has(s.layerId)
     );
-    const mergedWidgets = stampedWidgets.map((w) => {
+    const mergedWidgets = pageWidgets.map((w) => {
       const pos = widgetCoords[w.id];
       return pos ? { ...w, x: pos.x, y: pos.y } : w;
     });
@@ -1619,7 +1869,12 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
   ]);
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (draggingSelectedStrokes || draggingWidgetId || draggingPdfSheet || draggingNodeId) return;
     if (!isDrawingRef.current) return;
+    if (activeDrawingPointerIdRef.current !== null && e.pointerId !== activeDrawingPointerIdRef.current) {
+      return;
+    }
+    e.preventDefault();
     const rawPt = getPointerCoords(e);
     const pts = currentPointsRef.current;
     const lastPt = pts[pts.length - 1] ?? rawPt;
@@ -1644,6 +1899,19 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
   };
 
   const handlePointerUp = () => {
+    if (activeDrawingPointerIdRef.current !== null) {
+      const pid = activeDrawingPointerIdRef.current;
+      activeDrawingPointerIdRef.current = null;
+      try {
+        if (canvasRef.current?.hasPointerCapture?.(pid)) {
+          canvasRef.current.releasePointerCapture(pid);
+        }
+      } catch {
+        // ignore release error
+      }
+    }
+    setIsActivelyDrawing(false);
+
     const downInfo = pointerDownInfoRef.current;
     pointerDownInfoRef.current = null;
 
@@ -1664,38 +1932,14 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
       return;
     }
 
-    // If user clicked (tap without dragging < 6px) on a widget on the board, select it and open the corner menu!
-    if (downInfo && downInfo.maxDist < 6) {
-      if (downInfo.hitWidgetId) {
-        isDrawingRef.current = false;
-        currentPointsRef.current = [];
-        setSelectedWidgetId(downInfo.hitWidgetId);
+    // Single tap (< 6px) closes any open floating menu cleanly without interrupting drawing;
+    // opening the floating menu for shapes or widgets requires a double-click (onDoubleClick).
+    if (downInfo && downInfo.maxDist < 6 && !isOnBoardHandwritingActive && !isEraserActive) {
+      if (selectedWidgetId) {
+        setSelectedWidgetId(null);
+      }
+      if (selectedStrokeIds.length > 0) {
         setSelectedStrokeIds([]);
-        redrawCanvas();
-        return;
-      } else if (!isOnBoardHandwritingActive && !isEraserActive) {
-        if (selectedWidgetId) {
-          setSelectedWidgetId(null);
-        }
-        // Check if user clicked on an existing drawn shape/stroke on the board to select it for keyboard resize/delete!
-        const tapPt = currentPointsRef.current[0];
-        if (tapPt) {
-          let hitStrokeId: string | null = null;
-          for (let i = pageStrokes.length - 1; i >= 0; i--) {
-            const s = pageStrokes[i];
-            if (isStrokeHitByEraser(s.points, tapPt, 18 + s.width)) {
-              hitStrokeId = s.id;
-              break;
-            }
-          }
-          if (hitStrokeId) {
-            isDrawingRef.current = false;
-            currentPointsRef.current = [];
-            setSelectedStrokeIds([hitStrokeId]);
-            redrawCanvas();
-            return;
-          }
-        }
       }
     }
 
@@ -1762,9 +2006,19 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
       return;
     }
 
-    // Geometric Shape Recognition
+    // Geometric Shape Recognition & Forced Shape Presets
     let recognizedLabel: string | undefined;
     if (activeTool === 'shape-snap') {
+      const minX = Math.min(...pts.map((p) => p.x));
+      const maxX = Math.max(...pts.map((p) => p.x));
+      const minY = Math.min(...pts.map((p) => p.y));
+      const maxY = Math.max(...pts.map((p) => p.y));
+      const w = Math.max(24, maxX - minX);
+      const h = Math.max(24, maxY - minY);
+      const cx = (minX + maxX) / 2;
+      const cy = (minY + maxY) / 2;
+      const avgR = Math.max(16, (w + h) / 4);
+
       if (forcedShapeKind === 'line') {
         const first = pts[0];
         const last = pts[pts.length - 1];
@@ -1778,13 +2032,71 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
           { x: Number(endX.toFixed(1)), y: Number(endY.toFixed(1)) },
         ];
         recognizedLabel = 'پارهخط صاف';
+      } else if (forcedShapeKind === 'square') {
+        pts = [
+          { x: cx - avgR, y: cy - avgR },
+          { x: cx + avgR, y: cy - avgR },
+          { x: cx + avgR, y: cy + avgR },
+          { x: cx - avgR, y: cy + avgR },
+          { x: cx - avgR, y: cy - avgR },
+        ];
+        recognizedLabel = 'مربع منتظم';
+      } else if (forcedShapeKind === 'rectangle') {
+        pts = [
+          { x: minX, y: minY },
+          { x: maxX, y: minY },
+          { x: maxX, y: maxY },
+          { x: minX, y: maxY },
+          { x: minX, y: minY },
+        ];
+        recognizedLabel = 'مستطیل هندسی';
+      } else if (forcedShapeKind === 'circle') {
+        const circlePts: Point2D[] = [];
+        for (let i = 0; i <= 48; i++) {
+          const a = (i * 2 * Math.PI) / 48;
+          circlePts.push({
+            x: Number((cx + avgR * Math.cos(a)).toFixed(1)),
+            y: Number((cy + avgR * Math.sin(a)).toFixed(1)),
+          });
+        }
+        pts = circlePts;
+        recognizedLabel = 'دایره منتظم';
+      } else if (forcedShapeKind === 'triangle') {
+        pts = [
+          { x: cx, y: minY },
+          { x: maxX, y: maxY },
+          { x: minX, y: maxY },
+          { x: cx, y: minY },
+        ];
+        recognizedLabel = 'مثلث منتظم';
+      } else if (forcedShapeKind === 'rhombus') {
+        pts = [
+          { x: cx, y: minY },
+          { x: maxX, y: cy },
+          { x: cx, y: maxY },
+          { x: minX, y: cy },
+          { x: cx, y: minY },
+        ];
+        recognizedLabel = 'لوزی متقارن';
+      } else if (forcedShapeKind === 'pentagon' || forcedShapeKind === 'hexagon') {
+        const sides = forcedShapeKind === 'pentagon' ? 5 : 6;
+        const polyPts: Point2D[] = [];
+        for (let i = 0; i <= sides; i++) {
+          const a = -Math.PI / 2 + ((i % sides) * 2 * Math.PI) / sides;
+          polyPts.push({
+            x: Number((cx + avgR * Math.cos(a)).toFixed(1)),
+            y: Number((cy + avgR * Math.sin(a)).toFixed(1)),
+          });
+        }
+        pts = polyPts;
+        recognizedLabel = forcedShapeKind === 'pentagon' ? 'پنج‌ضلعی منتظم' : 'شش‌ضلعی منتظم';
       } else if (forcedShapeKind === 'auto') {
         const recognized = recognizeGeometricShape(pts, true);
         if (recognized.type !== 'freehand') {
           pts = recognized.snappedPoints;
           recognizedLabel = recognized.labelFa;
           setLastSnapNotice(
-            `تشخیص هوشمند: ${recognized.labelFa} (با کلیدهای + و - یا Delete کیبورد تنظیم کنید)`
+            `تشخیص هوشمند: ${recognized.labelFa} (با ماوس یا کلیدهای چهار جهت جابه‌جا کنید)`
           );
           window.setTimeout(() => setLastSnapNotice(null), 2400);
         }
@@ -1815,9 +2127,66 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
     };
     setStrokes((prev) => [...prev, newStroke]);
     setRedoStack([]);
-    // Auto-select newly snapped geometric shape so keyboard keys (+, -, Delete, Arrows) act on it immediately!
     if (recognizedLabel) {
-      setSelectedStrokeIds([newStroke.id]);
+      setLastSnapNotice(`${recognizedLabel} رسم شد — برای باز کردن منوی ویرایش روی شکل دابل‌کلیک کنید`);
+      window.setTimeout(() => setLastSnapNotice(null), 2200);
+    }
+  };
+
+  // Double-click on any drawn shape/stroke OR stamped widget opens its floating menu without interfering with drawing
+  const handleCanvasDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (isEraserActive || isOnBoardHandwritingActive) return;
+    const canvas = canvasRef.current;
+    const container = boardContainerRef.current;
+    if (!canvas || !container) return;
+
+    const canvasRect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / Math.max(1, canvasRect.width);
+    const scaleY = canvas.height / Math.max(1, canvasRect.height);
+    const pt: Point2D = {
+      x: Math.max(0, Math.min(canvas.width, (e.clientX - canvasRect.left) * scaleX)),
+      y: Math.max(0, Math.min(canvas.height, (e.clientY - canvasRect.top) * scaleY)),
+    };
+
+    const containerRect = container.getBoundingClientRect();
+    const relX = e.clientX - containerRect.left;
+    const relY = e.clientY - containerRect.top;
+
+    // 1. Check if user double-clicked on a widget / ready-made shape / ready number
+    const hitWidget = findHitWidgetAtRelCoords(relX, relY);
+    if (hitWidget) {
+      e.preventDefault();
+      setSelectedWidgetId(hitWidget.id);
+      setSelectedStrokeIds([]);
+      return;
+    }
+
+    // 2. Otherwise check if user double-clicked on a drawn shape or stroke (border OR inside closed shape)
+    let hitStrokeId: string | null = null;
+    for (let i = pageStrokes.length - 1; i >= 0; i--) {
+      const s = pageStrokes[i];
+      if (isStrokeHitByEraser(s.points, pt, 18 + s.width)) {
+        hitStrokeId = s.id;
+        break;
+      }
+      if (s.points.length >= 3 && Boolean(s.shapeLabel)) {
+        const bbox = getStrokesBoundingBox([s.points]);
+        if (
+          bbox &&
+          pt.x >= bbox.minX - 10 &&
+          pt.x <= bbox.maxX + 10 &&
+          pt.y >= bbox.minY - 10 &&
+          pt.y <= bbox.maxY + 10
+        ) {
+          hitStrokeId = s.id;
+          break;
+        }
+      }
+    }
+
+    if (hitStrokeId) {
+      e.preventDefault();
+      setSelectedStrokeIds([hitStrokeId]);
       setSelectedWidgetId(null);
     }
   };
@@ -1932,16 +2301,33 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
           : 'flex-1 flex overflow-hidden relative bg-slate-100 dark:bg-slate-950'
       }
     >
-      {/* Hidden File Input for Importing PDF or Image onto Whiteboard */}
+      {/* Hidden File Input for Importing PDF onto Whiteboard */}
       <input
         ref={pdfFileInputRef}
         type="file"
-        accept=".pdf,application/pdf,image/*"
+        accept=".pdf,application/pdf"
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
           if (f) {
             handleUploadPdfOrImageFile(f, 120, 70, true);
+            setShowPdfImportMenu(false);
+            e.target.value = '';
+          }
+        }}
+      />
+
+      {/* Hidden File Input for Importing Image/Photo (وارد کردن عکس) inside the PDF Import Option */}
+      <input
+        ref={imageFileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) {
+            handleUploadPdfOrImageFile(f, 140, 80, imageImportFullscreenMode);
+            setShowPdfImportMenu(false);
             e.target.value = '';
           }
         }}
@@ -2048,7 +2434,13 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
           onPointerUp={handlePointerUp}
           onPointerLeave={() => {
             setBoardCursorPos(null);
-            handlePointerUp();
+            if (!isDrawingRef.current && !draggingSelectedStrokes) {
+              handlePointerUp();
+            }
+          }}
+          onDragStart={(e) => {
+            if ((e.target as HTMLElement)?.closest('[draggable="true"]')) return;
+            e.preventDefault();
           }}
           onDragOver={(e) => {
             e.preventDefault();
@@ -2123,7 +2515,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
 
             <div className="h-4 w-px bg-slate-200 dark:bg-slate-800" />
 
-            {/* Multi-Page Switcher */}
+            {/* Multi-Page Switcher & Pinned Whiteboard Pages Bar (پین صفحات پرکاربرد روی نوار تابلو) */}
             <button
               type="button"
               onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
@@ -2157,6 +2549,94 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
             >
               <Plus className="w-3.5 h-3.5" />
             </button>
+
+            {/* Pin / Unpin Current Whiteboard Page Button */}
+            {(() => {
+              const isCurrentPinned = pinnedPages.some((p) => p.pageNumber === currentPage);
+              return (
+                <button
+                  type="button"
+                  data-testid="pin-current-page-btn"
+                  onClick={() => {
+                    setPinnedPages((prev) =>
+                      togglePinnedBoardPage(prev, currentPage, `صفحه ${fmt(currentPage)}`)
+                    );
+                    setLastSnapNotice(
+                      isCurrentPinned
+                        ? `صفحه ${fmt(currentPage)} از نوار تابلو برداشته شد`
+                        : `صفحه ${fmt(currentPage)} روی نوار تابلو پین شد (سویچ سریع)`
+                    );
+                    window.setTimeout(() => setLastSnapNotice(null), 2000);
+                  }}
+                  title={
+                    isCurrentPinned
+                      ? 'برداشتن پین این صفحه از نوار تابلو'
+                      : 'پین کردن این صفحه روی نوار تابلو برای سویچ سریع'
+                  }
+                  aria-label={isCurrentPinned ? 'برداشتن پین صفحه فعلی' : 'پین کردن صفحه فعلی در نوار تابلو'}
+                  className={`px-1.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors border ${
+                    isCurrentPinned
+                      ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-2xs'
+                      : 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
+                  }`}
+                >
+                  <Pin className="w-3 h-3" />
+                  <span>{isCurrentPinned ? 'پین‌شده' : 'پین صفحه'}</span>
+                </button>
+              );
+            })()}
+
+            {/* Quick-Switch Chips for Pinned Whiteboard Pages */}
+            {pinnedPages.length > 0 && (
+              <div
+                data-testid="pinned-pages-bar"
+                className="flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-amber-50/80 dark:bg-amber-950/30 border border-amber-300/60 dark:border-amber-700/50"
+              >
+                {pinnedPages.map((pp) => {
+                  const isActive = currentPage === pp.pageNumber;
+                  return (
+                    <div
+                      key={pp.pageNumber}
+                      className={`inline-flex items-center rounded-md text-[10px] font-bold transition-colors ${
+                        isActive
+                          ? 'bg-sky-600 text-white shadow-2xs'
+                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-sky-500/15'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        data-testid={`pinned-page-chip-${pp.pageNumber}`}
+                        onClick={() => {
+                          if (pp.pageNumber > totalPages) {
+                            setTotalPages(pp.pageNumber);
+                          }
+                          setCurrentPage(pp.pageNumber);
+                        }}
+                        className="px-1.5 py-0.5 flex items-center gap-1"
+                        title={`رفتن سریع به صفحه ${fmt(pp.pageNumber)}`}
+                      >
+                        <Pin className="w-2.5 h-2.5 opacity-80" />
+                        <span>{toPersianDigits(pp.label, usePersianNumerals)}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPinnedPages((prev) => togglePinnedBoardPage(prev, pp.pageNumber));
+                        }}
+                        aria-label={`حذف پین صفحه ${fmt(pp.pageNumber)}`}
+                        title="برداشتن پین"
+                        className={`px-1 py-0.5 rounded-l-md hover:bg-rose-500 hover:text-white transition-colors ${
+                          isActive ? 'text-white/80' : 'text-slate-400'
+                        }`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             <div className="h-4 w-px bg-slate-200 dark:bg-slate-800" />
 
@@ -2240,30 +2720,92 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
 
             <div className="h-4 w-px bg-slate-200 dark:bg-slate-800" />
 
-            {/* Direct Import PDF onto Whiteboard Button (وارد کردن PDF تمام‌صفحه روی وایت‌برد) */}
-            <button
-              type="button"
-              data-testid="import-pdf-to-board-btn"
-              onClick={() => pdfFileInputRef.current?.click()}
-              className="px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 bg-rose-500/10 text-rose-700 dark:text-rose-300 border border-rose-500/30 hover:bg-rose-600 hover:text-white transition-colors"
-              title="انتخاب فایل PDF یا تصویر برای قرار دادن تمام‌صفحه روی وایت‌برد"
-            >
-              <FileUp className="w-3.5 h-3.5" />
-              <span>وارد کردن PDF روی تخته</span>
-            </button>
-
-            {!boardPdfSheet && (
+            {/* Direct Import PDF & Image onto Whiteboard Dropdown Menu (گزینه وارد کردن PDF به همراه قابلیت وارد کردن عکس) */}
+            <div className="relative">
               <button
                 type="button"
-                data-testid="sample-pdf-to-board-btn"
-                onClick={() => handlePlaceSamplePdfOnBoard(true)}
-                className="px-2 py-1 rounded-lg text-[10px] font-bold bg-rose-600 text-white hover:bg-rose-500 transition-colors flex items-center gap-1"
-                title="قرار دادن برگه PDF نمونه به‌صورت تمام‌صفحه روی وایت‌برد"
+                data-testid="import-pdf-to-board-btn"
+                onClick={() => setShowPdfImportMenu((v) => !v)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 border transition-colors ${
+                  showPdfImportMenu
+                    ? 'bg-rose-600 text-white border-rose-500 shadow-2xs'
+                    : 'bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/30 hover:bg-rose-600 hover:text-white'
+                }`}
+                title="وارد کردن فایل PDF یا عکس روی تخته وایت‌برد"
               >
-                <Maximize2 className="w-3 h-3" />
-                <span>+ PDF تمام‌صفحه روی وایت‌برد</span>
+                <FileUp className="w-3.5 h-3.5" />
+                <span>وارد کردن PDF ▾</span>
               </button>
-            )}
+
+              {showPdfImportMenu && (
+                <div
+                  data-testid="pdf-and-image-import-menu"
+                  className="absolute right-0 mt-1.5 w-64 p-2 rounded-xl bg-white dark:bg-slate-900 border-2 border-rose-500/60 shadow-2xl z-50 space-y-1 text-xs"
+                >
+                  <div className="flex items-center justify-between px-1.5 pb-1 border-b border-slate-100 dark:border-slate-800 font-extrabold text-slate-800 dark:text-slate-100 text-[11px]">
+                    <span>وارد کردن PDF و عکس روی تخته</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowPdfImportMenu(false)}
+                      className="text-slate-400 hover:text-rose-500"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    data-testid="import-pdf-file-option-btn"
+                    onClick={() => pdfFileInputRef.current?.click()}
+                    className="w-full px-2.5 py-1.5 rounded-lg hover:bg-rose-500/10 text-slate-800 dark:text-slate-100 font-bold flex items-center gap-2 text-right transition-colors"
+                  >
+                    <FileUp className="w-4 h-4 text-rose-500 shrink-0" />
+                    <span>انتخاب فایل PDF از سیستم</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="import-image-file-option-btn"
+                    onClick={() => {
+                      setImageImportFullscreenMode(false);
+                      imageFileInputRef.current?.click();
+                    }}
+                    className="w-full px-2.5 py-1.5 rounded-lg hover:bg-sky-500/10 text-slate-800 dark:text-slate-100 font-bold flex items-center gap-2 text-right transition-colors"
+                  >
+                    <ImageIcon className="w-4 h-4 text-sky-500 shrink-0" />
+                    <span>وارد کردن عکس / تصویر (پنجره‌ای)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="import-image-fullscreen-option-btn"
+                    onClick={() => {
+                      setImageImportFullscreenMode(true);
+                      imageFileInputRef.current?.click();
+                    }}
+                    className="w-full px-2.5 py-1.5 rounded-lg hover:bg-indigo-500/10 text-slate-800 dark:text-slate-100 font-bold flex items-center gap-2 text-right transition-colors"
+                  >
+                    <ImageIcon className="w-4 h-4 text-indigo-500 shrink-0" />
+                    <span>وارد کردن عکس (تمام‌صفحه روی تخته)</span>
+                  </button>
+
+                  <div className="border-t border-slate-100 dark:border-slate-800 my-1" />
+
+                  <button
+                    type="button"
+                    data-testid="sample-pdf-to-board-btn"
+                    onClick={() => {
+                      handlePlaceSamplePdfOnBoard(true);
+                      setShowPdfImportMenu(false);
+                    }}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-600 hover:text-white text-rose-700 dark:text-rose-300 font-bold flex items-center gap-2 text-right transition-colors"
+                  >
+                    <Maximize2 className="w-3.5 h-3.5 shrink-0" />
+                    <span>قرار دادن برگه PDF نمونه روی تخته</span>
+                  </button>
+                </div>
+              )}
+            </div>
 
             {/* Small Pinnable Number Box Trigger (منوی کوچک درج عدد) */}
             <button
@@ -2308,13 +2850,13 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                   ? 'bg-emerald-600 text-white shadow-2xs ring-2 ring-emerald-400/50'
                   : 'bg-sky-500/15 text-sky-800 dark:text-sky-300 border border-sky-500/35 hover:bg-sky-500/25'
               }`}
-              title="روشن/خاموش کردن حالت نوشتن دست‌نویس آفلاین مستقیم روی وایت‌برد همراه با کادر گوشه صفحه"
+              title="روشن/خاموش کردن تشخیص آفلاین اعداد و نشانه‌های ریاضی روی تخته"
             >
               <Languages className="w-3.5 h-3.5" />
               <span>
                 {showHandwritingPad
-                  ? '✍️ دست‌نویس آفلاین: روشن ✓'
-                  : '✍️ دست‌نویس آفلاین: خاموش'}
+                  ? '🔢 اعداد و نشانه‌ها: روشن ✓'
+                  : '🔢 اعداد و نشانه‌ها: خاموش'}
               </span>
             </button>
 
@@ -2906,25 +3448,75 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
             <div
               data-testid="lasso-selection-box"
               style={{
-                left: selectedStrokesBox.minX - 10,
-                top: selectedStrokesBox.minY - 10,
-                width: selectedStrokesBox.width + 20,
-                height: selectedStrokesBox.height + 20,
+                left: `${selectedStrokesBox.overlay.leftPct}%`,
+                top: `${selectedStrokesBox.overlay.topPct}%`,
+                width: `${selectedStrokesBox.overlay.widthPct}%`,
+                height: `${selectedStrokesBox.overlay.heightPct}%`,
               }}
-              className="absolute border-2 border-dashed border-sky-500 bg-sky-500/8 rounded-xl z-30 pointer-events-none"
+              onPointerDown={(e) => {
+                if ((e.target as HTMLElement).closest('button')) return;
+                e.preventDefault();
+                e.stopPropagation();
+                window.getSelection?.()?.removeAllRanges?.();
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                const canvasRect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / Math.max(1, canvasRect.width);
+                const scaleY = canvas.height / Math.max(1, canvasRect.height);
+                try {
+                  e.currentTarget.setPointerCapture?.(e.pointerId);
+                } catch {
+                  // ignore
+                }
+                setDraggingSelectedStrokes({
+                  lastX: (e.clientX - canvasRect.left) * scaleX,
+                  lastY: (e.clientY - canvasRect.top) * scaleY,
+                });
+              }}
+              className="absolute border-2 border-dashed border-sky-500 bg-sky-500/8 rounded-xl z-[38] cursor-move pointer-events-auto select-none"
             >
               <div
                 data-testid="lasso-selection-toolbar"
-                className="absolute -top-9 right-0 flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-900 text-white shadow-lg pointer-events-auto whitespace-nowrap text-[10px] font-bold"
+                className={`absolute ${
+                  selectedStrokesBox.overlay.toolbarPlacement === 'below'
+                    ? 'top-full mt-1.5'
+                    : 'bottom-full mb-1.5'
+                } ${
+                  selectedStrokesBox.overlay.toolbarAlign === 'left' ? 'left-0' : 'right-0'
+                } w-max max-w-[min(520px,calc(100vw-32px))] flex flex-wrap items-center gap-1 px-2 py-1 rounded-lg bg-slate-900 text-white shadow-xl border border-slate-700/80 pointer-events-auto text-[10px] font-bold z-50 select-none`}
               >
-                <span className="text-sky-300 ml-1">
-                  {fmt(selectedStrokeIds.length)} خط انتخابی (بکشید = جابه‌جایی)
-                </span>
+                {(
+                  [
+                    { label: '↑', dx: 0, dy: -16, title: 'جابه‌جایی به بالا (ArrowUp)' },
+                    { label: '↓', dx: 0, dy: 16, title: 'جابه‌جایی به پایین (ArrowDown)' },
+                    { label: '→', dx: 16, dy: 0, title: 'جابه‌جایی به راست (ArrowRight)' },
+                    { label: '←', dx: -16, dy: 0, title: 'جابه‌جایی به چپ (ArrowLeft)' },
+                  ] as const
+                ).map((dir) => (
+                  <button
+                    key={dir.label}
+                    type="button"
+                    title={dir.title}
+                    onClick={() => {
+                      const selSet = new Set(selectedStrokeIds);
+                      setStrokes((prev) =>
+                        prev.map((s) =>
+                          selSet.has(s.id)
+                            ? { ...s, points: translateStrokePoints(s.points, dir.dx, dir.dy) }
+                            : s
+                        )
+                      );
+                    }}
+                    className="px-1.5 py-0.5 rounded bg-slate-700 hover:bg-slate-600 text-white"
+                  >
+                    {dir.label}
+                  </button>
+                ))}
                 <button
                   type="button"
                   data-testid="scale-up-selected-strokes-btn"
                   onClick={() => scaleSelectedStrokesOnBoard(1.15)}
-                  title="بزرگ‌تر کردن شکل (کلید + یا ArrowUp)"
+                  title="بزرگ‌تر کردن شکل (کلید +)"
                   className="px-1.5 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500"
                 >
                   + بزرگ‌تر
@@ -2933,7 +3525,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                   type="button"
                   data-testid="scale-down-selected-strokes-btn"
                   onClick={() => scaleSelectedStrokesOnBoard(0.87)}
-                  title="کوچک‌تر کردن شکل (کلید - یا ArrowDown)"
+                  title="کوچک‌تر کردن شکل (کلید -)"
                   className="px-1.5 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500"
                 >
                   - کوچک‌تر
@@ -2994,7 +3586,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
             </div>
           )}
 
-          {/* Shape-Snap Multi-Polygon Bar + Adjacent Offline Handwriting Button when activeTool === 'shape-snap' */}
+          {/* Shape-Snap Multi-Polygon Bar when activeTool === 'shape-snap' */}
           {activeTool === 'shape-snap' && (
             <div
               data-testid="shape-snap-and-handwriting-bar"
@@ -3004,6 +3596,13 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
               {(
                 [
                   { id: 'auto', label: 'تشخیص خودکار' },
+                  { id: 'square', label: 'مربع' },
+                  { id: 'rectangle', label: 'مستطیل' },
+                  { id: 'circle', label: 'دایره' },
+                  { id: 'triangle', label: 'مثلث' },
+                  { id: 'rhombus', label: 'لوزی' },
+                  { id: 'pentagon', label: 'پنج‌ضلعی' },
+                  { id: 'hexagon', label: 'شش‌ضلعی' },
                   { id: 'line', label: 'خط صاف' },
                   { id: 'freehand', label: 'رسم آزاد' },
                 ] as const
@@ -3011,8 +3610,9 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                 <button
                   key={m.id}
                   type="button"
+                  data-testid={`shape-snap-mode-${m.id}`}
                   onClick={() => setForcedShapeKind(m.id)}
-                  className={`px-2.5 py-1 rounded-lg font-semibold transition-colors ${
+                  className={`px-2 py-0.5 rounded-lg font-semibold transition-colors ${
                     forcedShapeKind === m.id
                       ? 'bg-sky-600 text-white shadow-2xs'
                       : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
@@ -3021,28 +3621,6 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                   {m.label}
                 </button>
               ))}
-
-              {/* Right next to Shape Recognition: Offline Gboard Handwriting On/Off Toggle */}
-              <button
-                type="button"
-                data-testid="open-handwriting-next-to-shape-btn"
-                onClick={() => {
-                  setHandwritingPadTab('handwriting');
-                  setShowHandwritingPad((v) => !v);
-                }}
-                className={`px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 shadow-xs transition-colors ${
-                  showHandwritingPad
-                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                    : 'bg-sky-600 hover:bg-sky-500 text-white'
-                }`}
-              >
-                <Languages className="w-3.5 h-3.5" />
-                <span>
-                  {showHandwritingPad
-                    ? '✍️ دست‌نویسی آفلاین: روشن ✓'
-                    : '✍️ دست‌نویسی آفلاین: خاموش'}
-                </span>
-              </button>
             </div>
           )}
 
@@ -3117,6 +3695,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                 onStampFlowchart={(title, steps) => {
                   const baseNodes: StickyNode[] = steps.map((stepLabel, idx) => ({
                     id: `flow-${Date.now()}-${idx}`,
+                    pageIndex: currentPage,
                     title: `مرحله ${fmt(idx + 1)}`,
                     text: stepLabel,
                     colorClass:
@@ -3276,57 +3855,118 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
           )}
 
           {/* =====================================================================
-              PDF / IMAGE DROPPED DIRECTLY ON WHITEBOARD (تخته سفید با قابلیت تمام‌صفحه کردن PDF روی وایت‌برد)
+              PDF / IMAGE DROPPED DIRECTLY ON WHITEBOARD (همراه با نوار کنترل و بزرگنمایی مستقل در z-30 بالای بوم تا کلیک روی بزرگنمایی هرگز خط رسم نکند!)
           ===================================================================== */}
           {boardPdfSheet && (
-            <div
-              data-testid="board-dropped-pdf-sheet"
-              style={
-                boardPdfSheet.isFullscreenOnBoard
-                  ? {
-                      left: 8,
-                      top: 52,
-                      width: 'calc(100% - 16px)',
-                      height: 'calc(100% - 60px)',
-                    }
-                  : {
-                      left: boardPdfSheet.x,
-                      top: boardPdfSheet.y,
-                      width: boardPdfSheet.width,
-                      height: boardPdfSheet.height,
-                    }
-              }
-              className={`absolute rounded-xl bg-white dark:bg-slate-900 border-2 border-rose-500/70 shadow-xl overflow-hidden flex flex-col transition-all ${
-                boardPdfSheet.interactiveScrollMode ? 'z-30' : 'z-10 pointer-events-none'
-              }`}
-            >
-              {/* PDF Sheet Header Bar (Always clickable at z-30 so user can toggle fullscreen, move, flip pages, or close) */}
+            <>
+              {/* 1. Dedicated PDF / Image Header & Zoom Control Bar at z-[35] ABOVE the z-20 ink canvas */}
               <div
+                data-testid="board-pdf-header-bar"
+                style={
+                  boardPdfSheet.isFullscreenOnBoard
+                    ? {
+                        left: 8,
+                        top: 138,
+                        width: 'calc(100% - 16px)',
+                      }
+                    : {
+                        left: boardPdfSheet.x,
+                        top: boardPdfSheet.y,
+                        width: boardPdfSheet.width,
+                      }
+                }
                 onPointerDown={(e) => {
                   e.stopPropagation();
+                  if ((e.target as HTMLElement).closest('button')) return;
                   if (!boardPdfSheet.isFullscreenOnBoard) {
                     setDraggingPdfSheet(true);
                   }
                 }}
-                className="px-3 py-1.5 bg-rose-600 text-white text-[11px] font-bold flex items-center justify-between cursor-move pointer-events-auto select-none shrink-0"
+                onPointerMove={(e) => e.stopPropagation()}
+                onPointerUp={(e) => {
+                  e.stopPropagation();
+                  if (draggingPdfSheet) setDraggingPdfSheet(false);
+                }}
+                className="absolute z-[35] h-9 px-3 bg-rose-600 text-white text-[11px] font-bold flex items-center justify-between gap-2 rounded-t-xl border-x-2 border-t-2 border-rose-500/80 shadow-md cursor-move pointer-events-auto select-none"
               >
-                <div className="flex items-center gap-1.5 truncate">
+                <div className="flex items-center gap-1.5 truncate min-w-0">
                   <FileText className="w-3.5 h-3.5 shrink-0" />
                   <span className="truncate">{boardPdfSheet.name}</span>
                   {boardPdfSheet.isFullscreenOnBoard && (
-                    <span className="px-1.5 py-0.5 rounded bg-white/20 text-[9px]">
-                      تمام‌صفحه روی وایت‌برد (آماده نوشتن با قلم)
+                    <span className="hidden sm:inline px-1.5 py-0.5 rounded bg-white/20 text-[9px] shrink-0">
+                      تمام‌صفحه (آماده نوشتن با قلم)
                     </span>
                   )}
                 </div>
+
                 <div
-                  className="flex items-center gap-1.5 shrink-0"
+                  className="flex items-center gap-1 shrink-0"
                   onPointerDown={(e) => e.stopPropagation()}
                 >
+                  {/* Real PDF / Image Zoom Controls (- کوچک‌نمایی / 100% / + بزرگنمایی) — ALWAYS clickable above canvas */}
+                  <button
+                    type="button"
+                    data-testid="pdf-zoom-out-btn"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setBoardPdfSheet((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              zoom: Math.max(0.5, Number(((prev.zoom ?? 1) - 0.15).toFixed(2))),
+                            }
+                          : null
+                      );
+                    }}
+                    className="px-1.5 py-0.5 rounded bg-white/20 hover:bg-white/35 text-[10px] flex items-center gap-0.5"
+                    title="کوچک‌نمایی محتوای PDF"
+                    aria-label="کوچک‌نمایی PDF"
+                  >
+                    <ZoomOut className="w-3 h-3" />
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="pdf-zoom-reset-btn"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setBoardPdfSheet((prev) => (prev ? { ...prev, zoom: 1 } : null));
+                    }}
+                    className="px-1.5 py-0.5 rounded bg-white/15 hover:bg-white/30 font-mono text-[10px] tabular-nums"
+                    title="بازگشت به بزرگنمایی ۱۰۰٪"
+                  >
+                    {fmt(Math.round((boardPdfSheet.zoom ?? 1) * 100))}٪
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="pdf-zoom-in-btn"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setBoardPdfSheet((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              zoom: Math.min(2.5, Number(((prev.zoom ?? 1) + 0.15).toFixed(2))),
+                            }
+                          : null
+                      );
+                    }}
+                    className="px-1.5 py-0.5 rounded bg-white/25 hover:bg-white/40 text-[10px] flex items-center gap-0.5 font-extrabold"
+                    title="بزرگنمایی محتوای PDF (بدون رسم خط)"
+                    aria-label="بزرگنمایی PDF"
+                  >
+                    <ZoomIn className="w-3 h-3" />
+                    <span className="hidden md:inline">بزرگنمایی</span>
+                  </button>
+
                   {boardPdfSheet.kind === 'sample-sheet' && (
                     <button
                       type="button"
-                      onClick={() =>
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
                         setBoardPdfSheet((prev) =>
                           prev
                             ? {
@@ -3337,8 +3977,8 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                                   ((prev.sampleQuestionIndex + 1) % SAMPLE_PDF_SHEETS.length) + 1,
                               }
                             : null
-                        )
-                      }
+                        );
+                      }}
                       className="px-2 py-0.5 rounded bg-white/20 hover:bg-white/30 text-[10px]"
                     >
                       صفحه بعد ({fmt(boardPdfSheet.pageNumber)}/{fmt(boardPdfSheet.totalPages)})
@@ -3347,18 +3987,20 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                   {boardPdfSheet.kind === 'pdf-blob' && (
                     <button
                       type="button"
-                      onClick={() =>
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
                         setBoardPdfSheet((prev) =>
                           prev
                             ? { ...prev, interactiveScrollMode: !prev.interactiveScrollMode }
                             : null
-                        )
-                      }
+                        );
+                      }}
                       className="px-2 py-0.5 rounded bg-white/20 hover:bg-white/30 text-[10px]"
                     >
                       {boardPdfSheet.interactiveScrollMode
                         ? 'حالت: اسکرول PDF'
-                        : 'حالت: نوشتن با قلم روی PDF'}
+                        : 'حالت: نوشتن با قلم'}
                     </button>
                   )}
 
@@ -3366,25 +4008,27 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                   <button
                     type="button"
                     data-testid="toggle-pdf-fullscreen-on-board-btn"
-                    onClick={() =>
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
                       setBoardPdfSheet((prev) =>
                         prev
                           ? { ...prev, isFullscreenOnBoard: !prev.isFullscreenOnBoard }
                           : null
-                      )
-                    }
+                      );
+                    }}
                     className="px-2 py-0.5 rounded bg-amber-400 text-slate-950 hover:bg-amber-300 font-extrabold text-[10px] flex items-center gap-1"
                     title="تمام‌صفحه کردن برگه PDF روی کل تخته وایت‌برد"
                   >
                     {boardPdfSheet.isFullscreenOnBoard ? (
                       <>
                         <Minimize2 className="w-3 h-3" />
-                        <span>اندازه پنجره‌ای</span>
+                        <span>پنجره‌ای</span>
                       </>
                     ) : (
                       <>
                         <Maximize2 className="w-3 h-3" />
-                        <span>تمام‌صفحه روی وایت‌برد</span>
+                        <span>تمام‌صفحه</span>
                       </>
                     )}
                   </button>
@@ -3392,26 +4036,33 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                   {!boardPdfSheet.isFullscreenOnBoard && (
                     <button
                       type="button"
-                      onClick={() =>
+                      data-testid="pdf-resize-bigger-btn"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
                         setBoardPdfSheet((prev) =>
                           prev
                             ? {
                                 ...prev,
-                                width: Math.min(980, prev.width + 90),
-                                height: Math.min(720, prev.height + 70),
+                                width: Math.min(1080, prev.width + 90),
+                                height: Math.min(760, prev.height + 70),
                               }
                             : null
-                        )
-                      }
+                        );
+                      }}
                       className="px-1.5 py-0.5 rounded bg-white/20 hover:bg-white/30 text-[10px]"
-                      title="بزرگ‌تر کردن برگه PDF"
+                      title="بزرگ‌تر کردن کادر برگه PDF"
                     >
-                      + بزرگ‌تر
+                      + کادر
                     </button>
                   )}
                   <button
                     type="button"
-                    onClick={() => setBoardPdfSheet(null)}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setBoardPdfSheet(null);
+                    }}
                     aria-label="بستن برگه PDF روی تخته"
                     className="p-0.5 rounded hover:bg-rose-700"
                   >
@@ -3420,40 +4071,72 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                 </div>
               </div>
 
-              {/* PDF Sheet Content Body */}
-              <div className="flex-1 bg-white dark:bg-slate-900 p-5 overflow-hidden relative">
-                {boardPdfSheet.kind === 'image-blob' && boardPdfSheet.url ? (
-                  <img
-                    src={boardPdfSheet.url}
-                    alt={boardPdfSheet.name}
-                    className="w-full h-full object-contain select-none"
-                  />
-                ) : boardPdfSheet.kind === 'pdf-blob' && boardPdfSheet.url ? (
-                  <iframe
-                    src={boardPdfSheet.url}
-                    title={boardPdfSheet.name}
-                    className="w-full h-full border-0"
-                  />
-                ) : (
-                  <div className="space-y-4 text-slate-900 dark:text-slate-100 select-none">
-                    <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
-                      <span className="text-base font-extrabold text-rose-600 dark:text-rose-400">
-                        {SAMPLE_PDF_SHEETS[boardPdfSheet.sampleQuestionIndex]?.title}
-                      </span>
-                      <span className="text-xs font-mono text-slate-400">
-                        صفحه {fmt(boardPdfSheet.pageNumber)} از {fmt(boardPdfSheet.totalPages)}
-                      </span>
-                    </div>
-                    <p className="text-base leading-loose font-semibold whitespace-pre-line">
-                      {SAMPLE_PDF_SHEETS[boardPdfSheet.sampleQuestionIndex]?.body}
-                    </p>
-                    <div className="pt-8 border-t border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-400">
-                      محل حل تشریحی و نوشتن مستقیم استاد با قلم روی برگه PDF تمام‌صفحه...
-                    </div>
+              {/* 2. PDF / Image Content Body (z-10 underneath the z-20 ink canvas unless interactiveScrollMode is enabled) */}
+              <div
+                data-testid="board-dropped-pdf-sheet"
+                style={
+                  boardPdfSheet.isFullscreenOnBoard
+                    ? {
+                        left: 8,
+                        top: 174,
+                        width: 'calc(100% - 16px)',
+                        height: 'calc(100% - 182px)',
+                      }
+                    : {
+                        left: boardPdfSheet.x,
+                        top: boardPdfSheet.y + 36,
+                        width: boardPdfSheet.width,
+                        height: Math.max(160, boardPdfSheet.height - 36),
+                      }
+                }
+                className={`absolute rounded-b-xl bg-white dark:bg-slate-900 border-x-2 border-b-2 border-rose-500/70 shadow-xl overflow-hidden flex flex-col transition-all ${
+                  boardPdfSheet.interactiveScrollMode ? 'z-25 pointer-events-auto' : 'z-10 pointer-events-none'
+                }`}
+              >
+                <div className="flex-1 bg-white dark:bg-slate-900 p-5 overflow-auto relative">
+                  <div
+                    data-testid="board-pdf-zoom-layer"
+                    style={{
+                      transform: `scale(${boardPdfSheet.zoom ?? 1})`,
+                      transformOrigin: 'top right',
+                      width: `${Math.min(100, 100 / Math.max(1, boardPdfSheet.zoom ?? 1))}%`,
+                    }}
+                    className="transition-transform duration-150 mr-0 ml-auto"
+                  >
+                    {boardPdfSheet.kind === 'image-blob' && boardPdfSheet.url ? (
+                      <img
+                        src={boardPdfSheet.url}
+                        alt={boardPdfSheet.name}
+                        className="w-full h-full object-contain select-none"
+                      />
+                    ) : boardPdfSheet.kind === 'pdf-blob' && boardPdfSheet.url ? (
+                      <iframe
+                        src={boardPdfSheet.url}
+                        title={boardPdfSheet.name}
+                        className="w-full h-full border-0"
+                      />
+                    ) : (
+                      <div className="space-y-4 text-slate-900 dark:text-slate-100 select-none">
+                        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
+                          <span className="text-base font-extrabold text-rose-600 dark:text-rose-400">
+                            {SAMPLE_PDF_SHEETS[boardPdfSheet.sampleQuestionIndex]?.title}
+                          </span>
+                          <span className="text-xs font-mono text-slate-400">
+                            صفحه {fmt(boardPdfSheet.pageNumber)} از {fmt(boardPdfSheet.totalPages)}
+                          </span>
+                        </div>
+                        <p className="text-base leading-loose font-semibold whitespace-pre-line">
+                          {SAMPLE_PDF_SHEETS[boardPdfSheet.sampleQuestionIndex]?.body}
+                        </p>
+                        <div className="pt-8 border-t border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-400">
+                          محل حل تشریحی و نوشتن مستقیم استاد با قلم روی برگه PDF تمام‌صفحه...
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
-            </div>
+            </>
           )}
 
           {/* Layer 1 (Locked Question Layer) */}
@@ -3481,13 +4164,13 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
             </div>
           )}
 
-          {/* Sticky Notes Overlay */}
-          {stickyNodes.length > 0 && (
+          {/* Sticky Notes Overlay (Scoped per current whiteboard page) */}
+          {pageStickyNodes.length > 0 && (
             <>
               <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
-                {stickyNodes.map((n) => {
+                {pageStickyNodes.map((n) => {
                   if (!n.connectedToId) return null;
-                  const target = stickyNodes.find((t) => t.id === n.connectedToId);
+                  const target = pageStickyNodes.find((t) => t.id === n.connectedToId);
                   if (!target) return null;
                   return (
                     <g key={`${n.id}-${target.id}`}>
@@ -3507,7 +4190,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                   );
                 })}
               </svg>
-              {stickyNodes.map((node) => (
+              {pageStickyNodes.map((node) => (
                 <div
                   key={node.id}
                   style={{ left: node.x, top: node.y }}
@@ -3715,9 +4398,9 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
           )}
 
           {/* =====================================================================
-              LAYER Z-10: Bare Frameless Vector Shapes & Numbers on Board
+              LAYER Z-10: Bare Frameless Vector Shapes, Widgets & Numbers (Scoped to currentPage ONLY!)
           ===================================================================== */}
-          {stampedWidgets.map((w, idx) => {
+          {pageWidgets.map((w, idx) => {
             const pos = widgetCoords[w.id] ?? {
               x: w.x || 240 + (idx % 3) * 85,
               y: w.y || 95 + (idx % 4) * 75,
@@ -3748,14 +4431,53 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
           })}
 
           {/* =====================================================================
-              COMPACT CORNER MENU FOR SELECTED SHAPE/WIDGET
+              VIEWPORT-CLAMPED FLOATING EDITOR FOR SELECTED SHAPE/WIDGET
+              (همیشه ۱۰۰٪ داخل محدوده همین صفحه وایت‌برد/نمایشگر — حتی در گوشه‌های صفحه هرگز بیرون نمی‌افتد!)
           ===================================================================== */}
-          {selectedWidget && (
+          {selectedWidget && (() => {
+            const containerRect = boardContainerRef.current?.getBoundingClientRect();
+            const scrollRect = scrollViewportRef.current?.getBoundingClientRect();
+            const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
+            const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+            const panelW = Math.min(320, vw - 24);
+            const panelH = Math.min(360, vh - 24);
+            const wPos = widgetCoords[selectedWidget.id] ?? {
+              x: selectedWidget.x || 240,
+              y: selectedWidget.y || 120,
+            };
+            // Anchor smartly near the selected widget inside the visible board viewport, then clamp strictly within screen bounds!
+            const rawDesiredLeft = containerRect
+              ? containerRect.left + wPos.x + 210
+              : showHandwritingPad
+              ? vw - panelW - 16
+              : 16;
+            const rawDesiredTop = containerRect
+              ? containerRect.top + wPos.y
+              : vh - panelH - 16;
+            const minBoundLeft = scrollRect ? Math.max(12, scrollRect.left + 8) : 12;
+            const maxBoundRight = scrollRect ? Math.min(vw - 12, scrollRect.right - 8) : vw - 12;
+            const effectiveViewportW = Math.max(panelW + 24, maxBoundRight);
+            const clamped = clampFloatingPanelPosition({
+              desiredLeft: Math.max(minBoundLeft, rawDesiredLeft),
+              desiredTop: rawDesiredTop,
+              panelWidth: panelW,
+              panelHeight: panelH,
+              viewportWidth: effectiveViewportW,
+              viewportHeight: vh,
+              padding: 12,
+            });
+            const finalLeft = Math.max(minBoundLeft, clamped.left);
+
+            return (
             <div
               data-testid="selected-shape-inspector"
-              className={`fixed bottom-3 ${
-                showHandwritingPad ? 'right-3' : 'left-3'
-              } w-80 p-3 rounded-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-2 border-sky-500 shadow-2xl z-40 space-y-2.5 text-xs`}
+              onPointerDown={(e) => e.stopPropagation()}
+              style={{
+                left: finalLeft,
+                top: clamped.top,
+                width: panelW,
+              }}
+              className="fixed max-w-[calc(100vw-24px)] max-h-[calc(100vh-24px)] overflow-y-auto p-3 rounded-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-2 border-sky-500 shadow-2xl z-40 space-y-2.5 text-xs"
             >
               <div className="flex items-center justify-between px-2 py-1 rounded-lg bg-sky-500/10 border border-sky-500/20 text-[10px] text-sky-700 dark:text-sky-300 font-semibold">
                 <span>کیبورد:</span>
@@ -3796,6 +4518,7 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                         {
                           ...selectedWidget,
                           id: copyId,
+                          pageIndex: currentPage,
                           x: (widgetCoords[selectedWidget.id]?.x ?? selectedWidget.x) + 35,
                           y: (widgetCoords[selectedWidget.id]?.y ?? selectedWidget.y) + 35,
                         },
@@ -4134,7 +4857,8 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
                 </div>
               )}
             </div>
-          )}
+            );
+          })()}
 
           {/* =====================================================================
               LAYER Z-20: Interactive HTML5 Ink Canvas (Dynamic Scrollable/Expandable Size)
@@ -4147,8 +4871,14 @@ export const SmartWhiteboardCanvas: React.FC<SmartWhiteboardCanvasProps> = ({
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
-            onPointerLeave={handlePointerUp}
-            className="w-full h-full cursor-none touch-none relative z-20"
+            onPointerCancel={handlePointerUp}
+            onDoubleClick={handleCanvasDoubleClick}
+            onLostPointerCapture={() => {
+              if (isDrawingRef.current || draggingSelectedStrokes) {
+                handlePointerUp();
+              }
+            }}
+            className="absolute inset-0 w-full h-full cursor-none touch-none z-20 select-none"
           />
 
           {/* =====================================================================

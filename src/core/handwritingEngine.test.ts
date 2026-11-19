@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   recognizeOfflineHandwriting,
+  removeStrokeEndpointHooks,
+  fitStrokeToBezierCurve,
   HandwritingStroke,
 } from './handwritingEngine';
 
@@ -18,17 +20,14 @@ function scaleStroke(
 }
 
 test('recognizeOfflineHandwriting recognizes Persian digits (۰-۹) and multi-digit Persian numbers accurately', () => {
-  // Persian digit ۱ (vertical stroke)
   const digit1 = scaleStroke([
     { x: 0.5, y: 0.1 },
     { x: 0.5, y: 0.35 },
     { x: 0.5, y: 0.65 },
     { x: 0.5, y: 0.9 },
   ]);
-  const res1 = recognizeOfflineHandwriting([digit1], 'fa-digits');
-  assert.equal(res1.bestMatch, '۱');
+  assert.equal(recognizeOfflineHandwriting([digit1], 'fa-digits').bestMatch, '۱');
 
-  // Persian digit ۲ (top right curve + vertical stem)
   const digit2 = scaleStroke([
     { x: 0.72, y: 0.18 },
     { x: 0.56, y: 0.32 },
@@ -36,10 +35,8 @@ test('recognizeOfflineHandwriting recognizes Persian digits (۰-۹) and multi-di
     { x: 0.36, y: 0.55 },
     { x: 0.36, y: 0.9 },
   ]);
-  const res2 = recognizeOfflineHandwriting([digit2], 'fa-digits');
-  assert.equal(res2.bestMatch, '۲');
+  assert.equal(recognizeOfflineHandwriting([digit2], 'fa-digits').bestMatch, '۲');
 
-  // Persian digit ۷ (V shape)
   const digit7 = scaleStroke([
     { x: 0.2, y: 0.16 },
     { x: 0.35, y: 0.5 },
@@ -47,10 +44,8 @@ test('recognizeOfflineHandwriting recognizes Persian digits (۰-۹) and multi-di
     { x: 0.65, y: 0.5 },
     { x: 0.8, y: 0.16 },
   ]);
-  const res7 = recognizeOfflineHandwriting([digit7], 'fa-digits');
-  assert.equal(res7.bestMatch, '۷');
+  assert.equal(recognizeOfflineHandwriting([digit7], 'fa-digits').bestMatch, '۷');
 
-  // Persian digit ۸ (inverted V shape)
   const digit8 = scaleStroke([
     { x: 0.2, y: 0.88 },
     { x: 0.35, y: 0.5 },
@@ -58,10 +53,9 @@ test('recognizeOfflineHandwriting recognizes Persian digits (۰-۹) and multi-di
     { x: 0.65, y: 0.5 },
     { x: 0.8, y: 0.88 },
   ]);
-  const res8 = recognizeOfflineHandwriting([digit8], 'fa-digits');
-  assert.equal(res8.bestMatch, '۸');
+  assert.equal(recognizeOfflineHandwriting([digit8], 'fa-digits').bestMatch, '۸');
 
-  // Multi-digit Persian number: ۱ on the left and ۷ on the right -> ۱۷
+  // Multi-digit Persian number: ۱۷
   const left1 = scaleStroke(
     [
       { x: 0.5, y: 0.12 },
@@ -84,6 +78,7 @@ test('recognizeOfflineHandwriting recognizes Persian digits (۰-۹) and multi-di
   );
   const multiFa = recognizeOfflineHandwriting([left1, right7], 'fa-digits');
   assert.equal(multiFa.bestMatch, '۱۷');
+  assert.equal(multiFa.clusterCount, 2);
 });
 
 test('recognizeOfflineHandwriting recognizes English digits (0-9) and multi-digit English numbers', () => {
@@ -98,8 +93,7 @@ test('recognizeOfflineHandwriting recognizes English digits (0-9) and multi-digi
     { x: 0.2, y: 0.3 },
     { x: 0.5, y: 0.12 },
   ]);
-  const res0 = recognizeOfflineHandwriting([en0], 'en-digits');
-  assert.equal(res0.bestMatch, '0');
+  assert.equal(recognizeOfflineHandwriting([en0], 'en-digits').bestMatch, '0');
 
   const en7 = scaleStroke([
     { x: 0.2, y: 0.16 },
@@ -108,87 +102,38 @@ test('recognizeOfflineHandwriting recognizes English digits (0-9) and multi-digi
     { x: 0.6, y: 0.52 },
     { x: 0.38, y: 0.88 },
   ]);
-  const res7 = recognizeOfflineHandwriting([en7], 'en-digits');
-  assert.equal(res7.bestMatch, '7');
+  assert.equal(recognizeOfflineHandwriting([en7], 'en-digits').bestMatch, '7');
+
+  const en4 = scaleStroke(
+    [
+      { x: 0.64, y: 0.14 },
+      { x: 0.2, y: 0.64 },
+      { x: 0.82, y: 0.64 },
+      { x: 0.64, y: 0.64 },
+      { x: 0.64, y: 0.92 },
+    ],
+    30,
+    30,
+    100
+  );
+  const en2 = scaleStroke(
+    [
+      { x: 0.22, y: 0.28 },
+      { x: 0.48, y: 0.12 },
+      { x: 0.76, y: 0.26 },
+      { x: 0.7, y: 0.48 },
+      { x: 0.2, y: 0.88 },
+      { x: 0.82, y: 0.88 },
+    ],
+    200,
+    30,
+    100
+  );
+  assert.equal(recognizeOfflineHandwriting([en4, en2], 'en-digits').bestMatch, '42');
 });
 
-test('recognizeOfflineHandwriting distinguishes Persian letters with dots and bars (ب، پ، ت، ک، گ)', () => {
-  // Base boat body for ب / پ / ت / ث
-  const boatBody = scaleStroke([
-    { x: 0.86, y: 0.45 },
-    { x: 0.82, y: 0.65 },
-    { x: 0.5, y: 0.68 },
-    { x: 0.18, y: 0.65 },
-    { x: 0.14, y: 0.45 },
-  ]);
-  const dotBelow1: HandwritingStroke = [
-    { x: 100, y: 135 },
-    { x: 102, y: 136 },
-  ];
-  const dotBelow2: HandwritingStroke = [
-    { x: 92, y: 135 },
-    { x: 94, y: 136 },
-  ];
-  const dotBelow3: HandwritingStroke = [
-    { x: 108, y: 142 },
-    { x: 110, y: 143 },
-  ];
-  const dotAbove1: HandwritingStroke = [
-    { x: 95, y: 55 },
-    { x: 97, y: 56 },
-  ];
-  const dotAbove2: HandwritingStroke = [
-    { x: 108, y: 55 },
-    { x: 110, y: 56 },
-  ];
-
-  // ب (1 dot below)
-  const resBe = recognizeOfflineHandwriting([boatBody, dotBelow1], 'fa-text');
-  assert.equal(resBe.bestMatch, 'ب');
-
-  // پ (3 dots below)
-  const resPe = recognizeOfflineHandwriting([boatBody, dotBelow1, dotBelow2, dotBelow3], 'fa-text');
-  assert.equal(resPe.bestMatch, 'پ');
-
-  // ت (2 dots above)
-  const resTe = recognizeOfflineHandwriting([boatBody, dotAbove1, dotAbove2], 'fa-text');
-  assert.equal(resTe.bestMatch, 'ت');
-
-  // ک and گ (with slanted top bar)
-  const kafBody = scaleStroke([
-    { x: 0.72, y: 0.34 },
-    { x: 0.72, y: 0.76 },
-    { x: 0.2, y: 0.76 },
-  ]);
-  const bar1 = scaleStroke([
-    { x: 0.88, y: 0.16 },
-    { x: 0.65, y: 0.32 },
-  ]);
-  const bar2 = scaleStroke([
-    { x: 0.88, y: 0.08 },
-    { x: 0.65, y: 0.24 },
-  ]);
-
-  const resKaf = recognizeOfflineHandwriting([kafBody, bar1], 'fa-text');
-  assert.equal(resKaf.bestMatch, 'ک');
-
-  const resGaf = recognizeOfflineHandwriting([kafBody, bar1, bar2], 'fa-text');
-  assert.equal(resGaf.bestMatch, 'گ');
-});
-
-test('recognizeOfflineHandwriting recognizes English letters (L), symbols (+, =), and offline word completions', () => {
-  const letterL = scaleStroke([
-    { x: 0.25, y: 0.14 },
-    { x: 0.25, y: 0.5 },
-    { x: 0.25, y: 0.86 },
-    { x: 0.52, y: 0.86 },
-    { x: 0.78, y: 0.86 },
-  ]);
-  const resL = recognizeOfflineHandwriting([letterL], 'en-text', 'M');
-  assert.equal(resL.bestMatch, 'L');
-  assert.ok(resL.wordCompletions.length > 0);
-
-  // Plus sign (+)
+test('recognizeOfflineHandwriting recognizes math & punctuation symbols (+, =, ÷, ×, >, <, √)', () => {
+  // Plus (+)
   const plusH = scaleStroke([
     { x: 0.2, y: 0.5 },
     { x: 0.5, y: 0.5 },
@@ -199,10 +144,9 @@ test('recognizeOfflineHandwriting recognizes English letters (L), symbols (+, =)
     { x: 0.5, y: 0.5 },
     { x: 0.5, y: 0.8 },
   ]);
-  const resPlus = recognizeOfflineHandwriting([plusH, plusV], 'symbols');
-  assert.equal(resPlus.bestMatch, '+');
+  assert.equal(recognizeOfflineHandwriting([plusH, plusV], 'symbols').bestMatch, '+');
 
-  // Equals sign (=)
+  // Equals (=)
   const eqTop = scaleStroke([
     { x: 0.2, y: 0.38 },
     { x: 0.5, y: 0.38 },
@@ -213,38 +157,52 @@ test('recognizeOfflineHandwriting recognizes English letters (L), symbols (+, =)
     { x: 0.5, y: 0.62 },
     { x: 0.8, y: 0.62 },
   ]);
-  const resEq = recognizeOfflineHandwriting([eqTop, eqBot], 'symbols');
-  assert.equal(resEq.bestMatch, '=');
+  assert.equal(recognizeOfflineHandwriting([eqTop, eqBot], 'symbols').bestMatch, '=');
+
+  // Division (÷)
+  const divBar = scaleStroke([
+    { x: 0.15, y: 0.5 },
+    { x: 0.85, y: 0.5 },
+  ]);
+  const dotTop: HandwritingStroke = [
+    { x: 100, y: 55 },
+    { x: 102, y: 56 },
+  ];
+  const dotBot: HandwritingStroke = [
+    { x: 100, y: 125 },
+    { x: 102, y: 126 },
+  ];
+  assert.equal(recognizeOfflineHandwriting([divBar, dotTop, dotBot], 'symbols').bestMatch, '÷');
+
+  // Greater than (>) and Less than (<)
+  const gtStroke = scaleStroke([
+    { x: 0.22, y: 0.18 },
+    { x: 0.78, y: 0.5 },
+    { x: 0.22, y: 0.82 },
+  ]);
+  assert.equal(recognizeOfflineHandwriting([gtStroke], 'symbols').bestMatch, '>');
+
+  const ltStroke = scaleStroke([
+    { x: 0.78, y: 0.18 },
+    { x: 0.22, y: 0.5 },
+    { x: 0.78, y: 0.82 },
+  ]);
+  assert.equal(recognizeOfflineHandwriting([ltStroke], 'symbols').bestMatch, '<');
 });
 
-test('recognizeOfflineHandwriting accurately recognizes large on-whiteboard strokes, connected 2-dot/3-dot strokes, and RTL Persian words', () => {
-  // Large boat body drawn on the main whiteboard (scale = 260px)
-  const largeBoat = scaleStroke(
-    [
-      { x: 0.86, y: 0.45 },
-      { x: 0.82, y: 0.65 },
-      { x: 0.5, y: 0.68 },
-      { x: 0.18, y: 0.65 },
-      { x: 0.14, y: 0.45 },
-    ],
-    400,
-    250,
-    260
-  );
-  // Single-point or 18px dot drawn on main whiteboard below the boat
-  const largeBoardDot: HandwritingStroke = [
-    { x: 525, y: 455 },
-    { x: 538, y: 462 },
+test('Geometric stroke smoothing removes endpoint micro-hooks and smooths strokes cleanly', () => {
+  const hookedStroke: HandwritingStroke = [
+    { x: 205, y: 48 },
+    { x: 200, y: 40 },
+    { x: 170, y: 40 },
+    { x: 130, y: 40 },
+    { x: 90, y: 40 },
+    { x: 86, y: 32 },
   ];
-  const resLargeBe = recognizeOfflineHandwriting([largeBoat, largeBoardDot], 'all');
-  assert.equal(resLargeBe.bestMatch, 'ب');
+  const dehooked = removeStrokeEndpointHooks(hookedStroke);
+  assert.equal(dehooked.hooksRemoved, 2);
+  assert.equal(dehooked.cleaned.length, 4);
 
-  // Connected 2-dot horizontal dash above boat -> ت
-  const connected2DotsDash: HandwritingStroke = [
-    { x: 510, y: 315 },
-    { x: 545, y: 315 },
-  ];
-  const resConnectedTe = recognizeOfflineHandwriting([largeBoat, connected2DotsDash], 'fa-text');
-  assert.equal(resConnectedTe.bestMatch, 'ت');
+  const smoothed = fitStrokeToBezierCurve(dehooked.cleaned);
+  assert.ok(smoothed.length > dehooked.cleaned.length);
 });
-

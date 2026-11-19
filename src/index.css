@@ -16,6 +16,29 @@
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
+
+  /* Prevent accidental UI/button text selection when drawing near or across toolbars */
+  button,
+  [role="button"],
+  canvas,
+  header,
+  nav {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  input,
+  textarea,
+  [contenteditable="true"] {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+}
+
+body.is-drawing-active,
+body.is-drawing-active * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
 }
 
 .tabular-nums {

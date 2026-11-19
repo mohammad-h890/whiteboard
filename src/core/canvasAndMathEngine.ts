@@ -115,29 +115,31 @@ function simplifyPolylineRDP(points: Point2D[], epsilon: number): Point2D[] {
 }
 
 /**
- * Extracts clean polygon corners from a closed stroke by combining RDP simplification,
- * short-segment collapsing, and near-collinear vertex merging.
+ * Extracts clean polygon corners from a closed stroke by trimming start/end overlap tails,
+ * applying RDP simplification, collapsing short micro-edges, and merging near-collinear edges.
  */
 function extractClosedPolygonVertices(points: Point2D[], diag: number): Point2D[] {
   if (points.length < 3) return points;
 
-  // Ensure loop is closed for RDP
-  const closedInput = [...points];
-  const endGap = Math.hypot(
-    closedInput[closedInput.length - 1].x - closedInput[0].x,
-    closedInput[closedInput.length - 1].y - closedInput[0].y
-  );
-  if (endGap > diag * 0.04) {
-    closedInput.push({ ...closedInput[0] });
-  } else {
-    closedInput[closedInput.length - 1] = { ...closedInput[0] };
+  // Trim trailing overlap points near the start point so closing a square doesn't create a fake 5th corner
+  const trimmed = [...points];
+  while (
+    trimmed.length > 8 &&
+    Math.hypot(
+      trimmed[trimmed.length - 1].x - trimmed[0].x,
+      trimmed[trimmed.length - 1].y - trimmed[0].y
+    ) <
+      diag * 0.09
+  ) {
+    trimmed.pop();
   }
 
-  const rdp = simplifyPolylineRDP(closedInput, diag * 0.045);
+  const closedInput = [...trimmed, { ...trimmed[0] }];
+  const rdp = simplifyPolylineRDP(closedInput, diag * 0.052);
   let verts = rdp.slice(0, -1); // remove duplicate closing vertex
   if (verts.length < 3) return verts;
 
-  // Collapse micro-edges shorter than 0.115 * diag by averaging adjacent close corners
+  // Collapse micro-edges shorter than 0.14 * diag by averaging adjacent close corners
   let changed = true;
   while (changed && verts.length > 3) {
     changed = false;
@@ -145,7 +147,7 @@ function extractClosedPolygonVertices(points: Point2D[], diag: number): Point2D[
       const nextIdx = (i + 1) % verts.length;
       const curr = verts[i];
       const next = verts[nextIdx];
-      if (Math.hypot(next.x - curr.x, next.y - curr.y) < diag * 0.115) {
+      if (Math.hypot(next.x - curr.x, next.y - curr.y) < diag * 0.14) {
         verts[i] = { x: (curr.x + next.x) / 2, y: (curr.y + next.y) / 2 };
         verts.splice(nextIdx, 1);
         changed = true;
@@ -166,7 +168,7 @@ function extractClosedPolygonVertices(points: Point2D[], diag: number): Point2D[
       const a2 = Math.atan2(next.y - curr.y, next.x - curr.x);
       let diff = Math.abs(a2 - a1);
       if (diff > Math.PI) diff = 2 * Math.PI - diff;
-      if (diff < (24 * Math.PI) / 180) {
+      if (diff < (28 * Math.PI) / 180) {
         verts.splice(i, 1);
         changed = true;
         break;
@@ -207,10 +209,35 @@ function closePolygonPoints(vertices: Point2D[]): Point2D[] {
 }
 
 /**
+ * Checks whether `verts` has `expectedSides` vertices roughly evenly distributed in angle around `(cx, cy)`.
+ */
+function hasRegularAngularDistribution(
+  verts: Point2D[],
+  expectedSides: number,
+  cx: number,
+  cy: number
+): boolean {
+  if (verts.length !== expectedSides) return false;
+  const angles = verts
+    .map((v) => Math.atan2(v.y - cy, v.x - cx))
+    .sort((a, b) => a - b);
+  const idealStep = (2 * Math.PI) / expectedSides;
+  for (let i = 0; i < expectedSides; i++) {
+    const nextAngle =
+      i < expectedSides - 1 ? angles[i + 1] : angles[0] + 2 * Math.PI;
+    const gap = nextAngle - angles[i];
+    if (gap < idealStep * 0.48 || gap > idealStep * 1.55) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * AI Geometric Shape Recognizer: automatically detects whether a hand-drawn stroke
- * is a straight line, triangle, rectangle, rhombus, trapezoid, parallelogram,
+ * is a straight line, triangle, square/rectangle, rhombus, trapezoid, parallelogram,
  * pentagon (5-gon), hexagon (6-gon), octagon (8-gon), circle, or ellipse,
- * and returns clean geometric vertices.
+ * and returns clean, regular geometric vertices.
  */
 export function recognizeGeometricShape(
   points: Point2D[],
@@ -293,12 +320,30 @@ export function recognizeGeometricShape(
       return errSum / sampled.length;
     };
 
+    // Measure what fraction of the stroke moves nearly horizontally or vertically (axis-aligned square/rectangle signature)
+    let axisAlignedSegs = 0;
+    let totalMeasuredSegs = 0;
+    for (let i = 2; i < sampled.length; i++) {
+      const dx = Math.abs(sampled[i].x - sampled[i - 2].x);
+      const dy = Math.abs(sampled[i].y - sampled[i - 2].y);
+      const segLen = Math.hypot(dx, dy);
+      if (segLen > 1e-2) {
+        totalMeasuredSegs++;
+        const acuteDeg = (Math.atan2(Math.min(dx, dy), Math.max(dx, dy)) * 180) / Math.PI;
+        if (acuteDeg <= 22) {
+          axisAlignedSegs++;
+        }
+      }
+    }
+    const axisAlignedRatio =
+      totalMeasuredSegs > 0 ? axisAlignedSegs / totalMeasuredSegs : 0;
+
     // Extract true polygon corners from the stroke using RDP + collinear merging
     const detectedPolyVerts = extractClosedPolygonVertices(points, diag);
     const detectedCornerCount = detectedPolyVerts.length;
     const detectedPolyErr = evalPolygonFit(detectedPolyVerts);
 
-    // Count how many of the 4 bounding-box corners are visited within 0.165 * diag
+    // Count how many of the 4 bounding-box corners are visited within 0.22 * diag
     const bboxCorners: Point2D[] = [
       { x: minX, y: minY },
       { x: maxX, y: minY },
@@ -308,8 +353,27 @@ export function recognizeGeometricShape(
     let cornersVisited = 0;
     for (const c of bboxCorners) {
       const minD = Math.min(...sampled.map((p) => Math.hypot(p.x - c.x, p.y - c.y)));
-      if (minD < diag * 0.165) {
+      if (minD < diag * 0.22) {
         cornersVisited++;
+      }
+    }
+
+    // Check if a 4-vertex polygon has 2 near-horizontal and 2 near-vertical edges (Rectangle / Square)
+    let isAxisAligned4Gon = false;
+    if (detectedCornerCount === 4) {
+      let horizEdges = 0;
+      let vertEdges = 0;
+      for (let i = 0; i < 4; i++) {
+        const a = detectedPolyVerts[i];
+        const b = detectedPolyVerts[(i + 1) % 4];
+        const dx = Math.abs(b.x - a.x);
+        const dy = Math.abs(b.y - a.y);
+        const degFromHoriz = (Math.atan2(dy, dx) * 180) / Math.PI;
+        if (degFromHoriz <= 24) horizEdges++;
+        else if (degFromHoriz >= 66) vertEdges++;
+      }
+      if (horizEdges === 2 && vertEdges === 2) {
+        isAxisAligned4Gon = true;
       }
     }
 
@@ -322,18 +386,20 @@ export function recognizeGeometricShape(
       circleRawErrSum += distInPixels / diag;
     }
     const rawCircleError = circleRawErrSum / sampled.length;
-    // Penalize circle if the stroke clearly has 3..6 straight polygon edges that fit much better than an arc
     const isSharpPolygon =
       detectedCornerCount >= 3 &&
       detectedCornerCount <= 8 &&
-      detectedPolyErr < rawCircleError * 0.72;
-    const circleCornerPenalty = isSharpPolygon
-      ? 1.55
-      : cornersVisited >= 4
-      ? 1.45
-      : cornersVisited === 3
-      ? 1.25
-      : 1.0;
+      detectedPolyErr < rawCircleError * 0.76;
+    const circleCornerPenalty =
+      isAxisAligned4Gon || axisAlignedRatio >= 0.68
+        ? 1.85
+        : isSharpPolygon
+        ? 1.55
+        : cornersVisited >= 4
+        ? 1.45
+        : cornersVisited === 3
+        ? 1.25
+        : 1.0;
     const circleError = rawCircleError * circleCornerPenalty;
 
     // Candidate 2: Pentagon (پنج‌ضلعی منتظم - 5 equal sides & angles around center)
@@ -350,10 +416,14 @@ export function recognizeGeometricShape(
       evalPolygonFit(regPentagonStretchedUp),
       evalPolygonFit(regPentagonStretchedInv)
     );
-    const pentagonError =
-      detectedCornerCount === 5
-        ? Math.min(detectedPolyErr, regPentagonErr) * 0.85
-        : regPentagonErr * 1.15;
+    const isValidPentagonTopology =
+      detectedCornerCount === 5 &&
+      !isAxisAligned4Gon &&
+      axisAlignedRatio < 0.64 &&
+      hasRegularAngularDistribution(detectedPolyVerts, 5, cx, cy);
+    const pentagonError = isValidPentagonTopology
+      ? Math.min(regPentagonErr, detectedPolyErr * 1.08) * 0.85
+      : regPentagonErr * 1.35;
 
     // Candidate 3: Hexagon (شش‌ضلعی منتظم - 6 equal sides & angles around center)
     const regHexPointy = buildRegularPolygonVertices(6, cx, cy, avgR, avgR, -Math.PI / 2);
@@ -369,10 +439,14 @@ export function recognizeGeometricShape(
       evalPolygonFit(regHexStretchedPointy),
       evalPolygonFit(regHexStretchedFlat)
     );
-    const hexagonError =
-      detectedCornerCount === 6
-        ? Math.min(detectedPolyErr, regHexErr) * 0.85
-        : regHexErr * 1.15;
+    const isValidHexagonTopology =
+      detectedCornerCount === 6 &&
+      !isAxisAligned4Gon &&
+      axisAlignedRatio < 0.64 &&
+      hasRegularAngularDistribution(detectedPolyVerts, 6, cx, cy);
+    const hexagonError = isValidHexagonTopology
+      ? Math.min(regHexErr, detectedPolyErr * 1.08) * 0.85
+      : regHexErr * 1.35;
 
     // Candidate 4: Octagon (هشت‌ضلعی منتظم - 8 equal sides & angles around center)
     const regOctagon = buildRegularPolygonVertices(8, cx, cy, avgR, avgR, Math.PI / 8);
@@ -380,6 +454,7 @@ export function recognizeGeometricShape(
     const regOctagonErr = Math.min(evalPolygonFit(regOctagon), evalPolygonFit(regOctagonStretched));
     const octagonError =
       (detectedCornerCount === 7 || detectedCornerCount === 8) &&
+      axisAlignedRatio < 0.6 &&
       detectedPolyErr < rawCircleError * 0.78
         ? Math.min(detectedPolyErr, regOctagonErr) * 0.88
         : Infinity;
@@ -393,9 +468,13 @@ export function recognizeGeometricShape(
     ];
     const rhombusRawErr = evalPolygonFit(rhombusCorners);
     const rhombusError =
-      cornersVisited <= 2 ? rhombusRawErr * 0.92 : rhombusRawErr * 1.35;
+      isAxisAligned4Gon || axisAlignedRatio >= 0.62
+        ? rhombusRawErr * 1.65
+        : cornersVisited <= 1
+        ? rhombusRawErr * 0.88
+        : rhombusRawErr * 1.35;
 
-    // Candidate 6: Rectangle / Square fit error + 4-edge & 4-corner coverage check
+    // Candidate 6: Rectangle / Square fit error + 4-edge & axis-alignment check
     let rectErrSum = 0;
     let hasTop = false;
     let hasBottom = false;
@@ -404,49 +483,68 @@ export function recognizeGeometricShape(
     for (const p of sampled) {
       const d = pointToPolygonDist(p, bboxCorners);
       rectErrSum += d / diag;
-      if (Math.abs(p.y - minY) < height * 0.18) hasTop = true;
-      if (Math.abs(maxY - p.y) < height * 0.18) hasBottom = true;
-      if (Math.abs(p.x - minX) < width * 0.18) hasLeft = true;
-      if (Math.abs(maxX - p.x) < width * 0.18) hasRight = true;
+      if (Math.abs(p.y - minY) < height * 0.22) hasTop = true;
+      if (Math.abs(maxY - p.y) < height * 0.22) hasBottom = true;
+      if (Math.abs(p.x - minX) < width * 0.22) hasLeft = true;
+      if (Math.abs(maxX - p.x) < width * 0.22) hasRight = true;
     }
     const allFourEdges = hasTop && hasBottom && hasLeft && hasRight;
-    const rectPenalty =
-      (allFourEdges ? 1.0 : 1.4) * (cornersVisited >= 4 ? 0.92 : cornersVisited <= 2 ? 1.35 : 1.1);
+    let rectPenalty =
+      (allFourEdges ? 0.95 : 1.35) *
+      (cornersVisited >= 3 ? 0.85 : cornersVisited === 2 ? 1.0 : 1.25);
+    if (isAxisAligned4Gon || (allFourEdges && axisAlignedRatio >= 0.64)) {
+      rectPenalty *= 0.65;
+    }
     const rectError = (rectErrSum / sampled.length) * rectPenalty;
 
-    // Candidate 7: Symmetrical Trapezoid / Parallelogram when 4 vertices are detected
+    // Candidate 7: Symmetrical Trapezoid / Parallelogram ONLY when clearly non-rectangular
     let customQuadType: 'trapezoid' | 'parallelogram' | null = null;
     let customQuadError = Infinity;
     let symmetricQuadVertices: Point2D[] = bboxCorners;
-    if (detectedCornerCount === 4 && detectedPolyErr < Math.min(rectError, rhombusError) * 0.82) {
+    if (
+      detectedCornerCount === 4 &&
+      !isAxisAligned4Gon &&
+      axisAlignedRatio < 0.62 &&
+      detectedPolyErr < Math.min(rectError, rhombusError) * 0.78
+    ) {
       const sortedByY = [...detectedPolyVerts].sort((a, b) => a.y - b.y);
-      const topWidth = Math.max(20, Math.abs(sortedByY[1].x - sortedByY[0].x));
-      const botWidth = Math.max(20, Math.abs(sortedByY[3].x - sortedByY[2].x));
-      const topSlope = Math.abs(sortedByY[1].y - sortedByY[0].y) / Math.max(1, topWidth);
-      const botSlope = Math.abs(sortedByY[3].y - sortedByY[2].y) / Math.max(1, botWidth);
-      if (
-        topSlope < 0.25 &&
-        botSlope < 0.25 &&
-        Math.min(topWidth, botWidth) / Math.max(topWidth, botWidth, 1) < 0.82
-      ) {
-        customQuadType = 'trapezoid';
-        symmetricQuadVertices = [
-          { x: cx - topWidth / 2, y: minY },
-          { x: cx + topWidth / 2, y: minY },
-          { x: cx + botWidth / 2, y: maxY },
-          { x: cx - botWidth / 2, y: maxY },
-        ];
-      } else {
-        customQuadType = 'parallelogram';
-        const slant = Math.max(width * 0.18, Math.min(width * 0.32, width * 0.22));
-        symmetricQuadVertices = [
-          { x: minX + slant, y: minY },
-          { x: maxX, y: minY },
-          { x: maxX - slant, y: maxY },
-          { x: minX, y: maxY },
-        ];
+      const topPair = [sortedByY[0], sortedByY[1]].sort((a, b) => a.x - b.x);
+      const botPair = [sortedByY[2], sortedByY[3]].sort((a, b) => a.x - b.x);
+      const topWidth = Math.max(20, topPair[1].x - topPair[0].x);
+      const botWidth = Math.max(20, botPair[1].x - botPair[0].x);
+      const topSlope = Math.abs(topPair[1].y - topPair[0].y) / topWidth;
+      const botSlope = Math.abs(botPair[1].y - botPair[0].y) / botWidth;
+
+      if (topSlope < 0.22 && botSlope < 0.22) {
+        const widthRatio = Math.min(topWidth, botWidth) / Math.max(topWidth, botWidth, 1);
+        const leftShift = topPair[0].x - botPair[0].x;
+        const rightShift = topPair[1].x - botPair[1].x;
+
+        if (widthRatio < 0.72) {
+          customQuadType = 'trapezoid';
+          symmetricQuadVertices = [
+            { x: cx - topWidth / 2, y: minY },
+            { x: cx + topWidth / 2, y: minY },
+            { x: cx + botWidth / 2, y: maxY },
+            { x: cx - botWidth / 2, y: maxY },
+          ];
+          customQuadError = detectedPolyErr * 0.9;
+        } else if (
+          leftShift * rightShift > 0 &&
+          Math.abs(leftShift) > width * 0.14 &&
+          Math.abs(rightShift) > width * 0.14
+        ) {
+          customQuadType = 'parallelogram';
+          const slant = Math.max(width * 0.18, Math.min(width * 0.32, Math.abs(leftShift)));
+          symmetricQuadVertices = [
+            { x: minX + slant, y: minY },
+            { x: maxX, y: minY },
+            { x: maxX - slant, y: maxY },
+            { x: minX, y: maxY },
+          ];
+          customQuadError = detectedPolyErr * 0.9;
+        }
       }
-      customQuadError = detectedPolyErr * 0.92;
     }
 
     // Candidate 8: Symmetrical Triangle (مثلث متقارن یا قائم‌الزاویه استاندارد)
@@ -492,7 +590,6 @@ export function recognizeGeometricShape(
     }
     if (detectedCornerCount === 3 && detectedPolyErr < rawTriError) {
       rawTriError = detectedPolyErr;
-      // Snap 3-corner triangle to its closest symmetrical canonical form (upright, inverted, or right-angled)
       const candidates = [
         { verts: uprightTri, err: uprightErr },
         { verts: invertedTri, err: invertedErr },
@@ -502,7 +599,12 @@ export function recognizeGeometricShape(
       bestTriVertices = candidates[0].verts;
     }
 
-    const triPenalty = cornersVisited >= 4 ? 1.3 : detectedCornerCount === 3 ? 0.88 : 1.0;
+    const triPenalty =
+      isAxisAligned4Gon || cornersVisited >= 4
+        ? 1.45
+        : detectedCornerCount === 3
+        ? 0.82
+        : 1.05;
     const triError = rawTriError * triPenalty;
 
     // Pick the shape with the strictly lowest error score
@@ -516,7 +618,7 @@ export function recognizeGeometricShape(
       hexagonError,
       octagonError
     );
-    const maxAllowedError = forceSnap ? 0.24 : 0.115;
+    const maxAllowedError = forceSnap ? 0.26 : 0.125;
 
     if (minError <= maxAllowedError) {
       if (pentagonError === minError) {
@@ -586,7 +688,7 @@ export function recognizeGeometricShape(
         };
       }
 
-      const isSquare = width / height >= 0.82 && width / height <= 1.22;
+      const isSquare = width / height >= 0.78 && width / height <= 1.28;
       const squareOrRectVerts: Point2D[] = isSquare
         ? [
             { x: cx - avgR, y: cy - avgR },
@@ -2210,6 +2312,207 @@ export function scaleMultiStrokesAboutCommonCenter(
   return strokePointsList.map((pts) => scaleStrokePointsAboutCenter(pts, scaleFactor, center));
 }
 
+export interface ClampedFloatingPosition {
+  left: number;
+  top: number;
+  wasClampedX: boolean;
+  wasClampedY: boolean;
+}
 
+/**
+ * Clamps any floating editor/toolbar panel strictly inside the visible viewport bounds
+ * so buttons never fall off-screen when a widget or shape is near a screen corner/edge.
+ */
+export function clampFloatingPanelPosition(params: {
+  desiredLeft: number;
+  desiredTop: number;
+  panelWidth: number;
+  panelHeight: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  padding?: number;
+}): ClampedFloatingPosition {
+  const {
+    desiredLeft,
+    desiredTop,
+    panelWidth,
+    panelHeight,
+    viewportWidth,
+    viewportHeight,
+    padding = 12,
+  } = params;
 
+  const maxLeft = Math.max(padding, viewportWidth - panelWidth - padding);
+  const maxTop = Math.max(padding, viewportHeight - panelHeight - padding);
 
+  const left = Math.round(Math.max(padding, Math.min(maxLeft, desiredLeft)));
+  const top = Math.round(Math.max(padding, Math.min(maxTop, desiredTop)));
+
+  return {
+    left,
+    top,
+    wasClampedX: left !== Math.round(desiredLeft),
+    wasClampedY: top !== Math.round(desiredTop),
+  };
+}
+
+export interface BoardWidgetHitSpec {
+  id: string;
+  title: string;
+  x: number;
+  y: number;
+  scale?: number;
+  widgetKind?: 'lab-shape' | 'persian-number' | 'geo-shape';
+}
+
+/**
+ * Estimates the interactive hit bounding box (in board CSS pixels) of a stamped widget,
+ * geometric shape, or ready-made Persian number/math symbol.
+ */
+export function estimateBoardWidgetHitBox(widget: BoardWidgetHitSpec): {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  width: number;
+  height: number;
+} {
+  const sc = Math.max(0.35, widget.scale ?? 1);
+  let baseW = 190;
+  let baseH = 145;
+  if (widget.title.includes('محور')) {
+    baseW = 360;
+    baseH = 120;
+  } else if (widget.widgetKind === 'persian-number') {
+    baseW = 115;
+    baseH = 85;
+  } else if (widget.widgetKind === 'geo-shape') {
+    baseW = 165;
+    baseH = 145;
+  }
+  const width = baseW * sc;
+  const height = baseH * sc;
+  return {
+    minX: widget.x - 8,
+    minY: widget.y - 8,
+    maxX: widget.x + width + 8,
+    maxY: widget.y + height + 8,
+    width,
+    height,
+  };
+}
+
+/**
+ * Checks whether a stroke-eraser sample point intersects a board widget, shape, or ready-made number.
+ */
+export function isPointHittingBoardWidget(
+  pt: Point2D,
+  widget: BoardWidgetHitSpec,
+  eraserRadius: number
+): boolean {
+  const box = estimateBoardWidgetHitBox(widget);
+  const r = Math.max(4, eraserRadius);
+  const nearestX = Math.max(box.minX, Math.min(pt.x, box.maxX));
+  const nearestY = Math.max(box.minY, Math.min(pt.y, box.maxY));
+  const dx = pt.x - nearestX;
+  const dy = pt.y - nearestY;
+  return dx * dx + dy * dy <= r * r;
+}
+
+export interface PinnedBoardPage {
+  pageNumber: number;
+  label: string;
+}
+
+/**
+ * Pins or unpins a whiteboard page on the board toolbar for fast 1-click switching.
+ */
+export function togglePinnedBoardPage(
+  pinnedPages: PinnedBoardPage[],
+  pageNumber: number,
+  customLabel?: string
+): PinnedBoardPage[] {
+  const safePage = Math.max(1, Math.floor(pageNumber));
+  const exists = pinnedPages.some((p) => p.pageNumber === safePage);
+  if (exists) {
+    return pinnedPages.filter((p) => p.pageNumber !== safePage);
+  }
+  const next: PinnedBoardPage[] = [
+    ...pinnedPages,
+    {
+      pageNumber: safePage,
+      label: customLabel?.trim() || `ص ${safePage}`,
+    },
+  ];
+  return next.sort((a, b) => a.pageNumber - b.pageNumber);
+}
+
+/**
+ * Updates the short label of an already-pinned whiteboard page.
+ */
+export function renamePinnedBoardPage(
+  pinnedPages: PinnedBoardPage[],
+  pageNumber: number,
+  newLabel: string
+): PinnedBoardPage[] {
+  const trimmed = newLabel.trim();
+  if (!trimmed) return pinnedPages;
+  return pinnedPages.map((p) =>
+    p.pageNumber === pageNumber ? { ...p, label: trimmed } : p
+  );
+}
+
+export interface StrokeSelectionOverlayLayout {
+  leftPct: number;
+  topPct: number;
+  widthPct: number;
+  heightPct: number;
+  padPx: number;
+  toolbarPlacement: 'above' | 'below';
+  toolbarAlign: 'left' | 'right';
+}
+
+/**
+ * Computes percentage-based CSS overlay coordinates for the dashed selection frame
+ * around selected canvas strokes/shapes, accounting for stroke thickness and board clamping.
+ */
+export function computeStrokeSelectionOverlay(params: {
+  box: BoundingBox2D;
+  maxStrokeWidth: number;
+  boardWidth: number;
+  boardHeight: number;
+  toolbarClearanceY?: number;
+}): StrokeSelectionOverlayLayout {
+  const {
+    box,
+    maxStrokeWidth,
+    boardWidth,
+    boardHeight,
+    toolbarClearanceY = 180,
+  } = params;
+  const safeW = Math.max(1, boardWidth);
+  const safeH = Math.max(1, boardHeight);
+  const padPx = Math.max(10, Math.ceil(Math.max(0, maxStrokeWidth) / 2) + 6);
+
+  const clampedLeft = Math.max(0, Math.min(safeW - 8, box.minX - padPx));
+  const clampedTop = Math.max(0, Math.min(safeH - 8, box.minY - padPx));
+  const clampedRight = Math.max(clampedLeft + 8, Math.min(safeW, box.maxX + padPx));
+  const clampedBottom = Math.max(clampedTop + 8, Math.min(safeH, box.maxY + padPx));
+
+  const overlayW = clampedRight - clampedLeft;
+  const overlayH = clampedBottom - clampedTop;
+
+  const hasRoomBelow = safeH - clampedBottom >= 64;
+  const toolbarPlacement: 'above' | 'below' =
+    clampedTop < toolbarClearanceY && hasRoomBelow ? 'below' : 'above';
+
+  return {
+    leftPct: Number(((clampedLeft / safeW) * 100).toFixed(4)),
+    topPct: Number(((clampedTop / safeH) * 100).toFixed(4)),
+    widthPct: Number(((overlayW / safeW) * 100).toFixed(4)),
+    heightPct: Number(((overlayH / safeH) * 100).toFixed(4)),
+    padPx,
+    toolbarPlacement,
+    toolbarAlign: clampedRight < 520 ? 'left' : 'right',
+  };
+}

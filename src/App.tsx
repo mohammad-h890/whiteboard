@@ -23,7 +23,6 @@ import {
   Pin,
   Plus,
   X,
-  FileUp,
   Bookmark,
   Clock,
   Sliders,
@@ -265,8 +264,9 @@ export default function App() {
   ]);
   const [activeLayerId, setActiveLayerId] = useState<string>('layer-2-solution');
 
-  // Shapes & Smart Widgets on Board
+  // Shapes & Smart Widgets on Board (each widget belongs to its specific whiteboard pageIndex)
   const [stampedWidgets, setStampedWidgets] = useState<StampedBoardWidget[]>([]);
+  const [activeBoardPage, setActiveBoardPage] = useState<number>(1);
   const [spotlightActive, setSpotlightActive] = useState<boolean>(false);
 
   const dockCursorSpec = useMemo(
@@ -348,6 +348,7 @@ export default function App() {
       ...prev,
       {
         id: `widget-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        pageIndex: activeBoardPage,
         title,
         summary,
         badgeColor,
@@ -422,6 +423,13 @@ export default function App() {
   // Global keyboard shortcuts
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (globalSearchOpen) setGlobalSearchOpen(false);
+        if (canvasSettingsOpen) setCanvasSettingsOpen(false);
+        if (featureManagerOpen) setFeatureManagerOpen(false);
+        if (shortcutsModalOpen) setShortcutsModalOpen(false);
+        return;
+      }
       const target = e.target as HTMLElement | null;
       if (
         target &&
@@ -741,16 +749,6 @@ export default function App() {
               </>
             )}
           </div>
-
-          {/* Direct PDF Import Button in Header */}
-          <button
-            type="button"
-            onClick={() => setFeatureTrigger({ feature: 'pdf-import', ts: Date.now() })}
-            className="px-2.5 py-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300 hover:bg-rose-600 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-colors whitespace-nowrap"
-          >
-            <FileUp className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">وارد کردن PDF</span>
-          </button>
 
           {/* Interactive Subject Labs Drawer Toggle */}
           <button
@@ -1271,15 +1269,15 @@ export default function App() {
                         onClick={() =>
                           setFeatureTrigger({ feature: 'handwriting-pad', ts: Date.now() })
                         }
-                        title="دست‌نویسی آفلاین (کیبورد گوگل): تشخیص اعداد و حروف فارسی و انگلیسی"
-                        aria-label="دست‌نویسی آفلاین (کیبورد گوگل)"
+                        title="تشخیص آفلاین اعداد فارسی، انگلیسی و نشانه‌های ریاضی"
+                        aria-label="تشخیص آفلاین اعداد و نشانه‌ها"
                         className={`w-full flex items-center ${
                           rightPenDockOpen ? 'gap-2 px-2.5' : 'justify-center px-1'
                         } py-1.5 rounded-lg text-xs font-bold bg-sky-500/12 text-sky-700 dark:text-sky-300 border border-sky-500/30 hover:bg-sky-600 hover:text-white transition-colors`}
                       >
                         <Languages className="w-4 h-4 shrink-0" />
                         {rightPenDockOpen && (
-                          <span className="truncate">دست‌نویس آفلاین (گوگل)</span>
+                          <span className="truncate">اعداد و نشانه‌ها (آفلاین)</span>
                         )}
                       </button>
                     )}
@@ -1601,7 +1599,9 @@ export default function App() {
             type="button"
             onClick={() => {
               setClearTrigger((c) => c + 1);
-              setStampedWidgets([]);
+              setStampedWidgets((prev) =>
+                prev.filter((w) => (w.pageIndex ?? 1) !== activeBoardPage)
+              );
             }}
             title="پاکسازی کامل تخته"
             aria-label="پاکسازی دستخط تخته"
@@ -1655,6 +1655,7 @@ export default function App() {
           onToggleFloatingWatermark={() => setFloatingWatermark((w) => !w)}
           usePersianNumerals={usePersianNumerals}
           clearTrigger={clearTrigger}
+          onCurrentPageChange={setActiveBoardPage}
           onLiveBoardSync={(boardState) => {
             if (projectorFrozen) return;
             const nextPayload: ProjectorSyncPayload = {
